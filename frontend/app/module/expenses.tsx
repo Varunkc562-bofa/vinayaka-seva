@@ -4,6 +4,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import { api } from "@/src/api";
+import { pickAndUploadImage } from "@/src/uploader";
+import { AuthImage } from "@/src/auth-image";
 import { useAuth } from "@/src/auth";
 import { colors, fonts, radius, spacing } from "@/src/theme";
 import { ScreenHeader, BottomSheet, Field, Button, Empty, fmtINR } from "@/src/ui";
@@ -18,6 +20,8 @@ export default function Expenses() {
   const [show, setShow] = useState(false);
   const [amt, setAmt] = useState(""); const [cat, setCat] = useState("decoration");
   const [vendor, setVendor] = useState(""); const [desc, setDesc] = useState("");
+  const [billPath, setBillPath] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
 
   const { data = [], isLoading, refetch, isRefetching } = useQuery({ queryKey: ["expenses"], queryFn: api.expenses });
   const total = useMemo(() => data.reduce((s: number, e: any) => s + (e.amount || 0), 0), [data]);
@@ -25,12 +29,18 @@ export default function Expenses() {
 
   const createM = useMutation({
     mutationFn: (d: any) => api.createExpense(d),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["expenses"] }); qc.invalidateQueries({ queryKey: ["dashboard"] }); setShow(false); setAmt(""); setVendor(""); setDesc(""); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["expenses"] }); qc.invalidateQueries({ queryKey: ["dashboard"] }); setShow(false); setAmt(""); setVendor(""); setDesc(""); setBillPath(null); },
   });
   const approveM = useMutation({
     mutationFn: (id: string) => api.approveExpense(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["expenses"] }),
   });
+
+  const attachBill = async () => {
+    setUploading(true);
+    try { const r = await pickAndUploadImage("expenses"); if (r) setBillPath(r.storage_path); }
+    finally { setUploading(false); }
+  };
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }} testID="expenses-screen">
@@ -56,6 +66,9 @@ export default function Expenses() {
               </View>
               <Text style={styles.amt}>{fmtINR(e.amount)}</Text>
             </View>
+            {e.bill_url ? (
+              <AuthImage storagePath={e.bill_url} style={{ width: "100%", height: 160, borderRadius: radius.md, marginTop: spacing.sm }} contentFit="cover" />
+            ) : null}
             {!e.approved && canApprove ? (
               <Pressable onPress={() => approveM.mutate(e.expense_id)} style={styles.approveBtn} testID={`approve-${e.expense_id}`}>
                 <Text style={styles.approveTxt}>Approve</Text>
@@ -77,8 +90,14 @@ export default function Expenses() {
         </View>
         <Field label="Vendor" value={vendor} onChangeText={setVendor} placeholder="Marigold Mart" />
         <Field label="Description" value={desc} onChangeText={setDesc} placeholder="Flowers for main pandal" />
+        <Pressable onPress={attachBill} style={styles.attach} testID="attach-bill-button" disabled={uploading}>
+          {uploading ? <ActivityIndicator color={colors.brandPrimary} /> :
+            <Text style={{ color: colors.brandPrimary, fontWeight: "700" }}>
+              {billPath ? "✓ Bill photo attached · tap to change" : "🧾 Attach bill photo (optional)"}
+            </Text>}
+        </Pressable>
         <Button label={createM.isPending ? "Saving…" : "Save expense"} disabled={createM.isPending || !amt}
-          onPress={() => createM.mutate({ amount: parseFloat(amt) || 0, category: cat, vendor, description: desc })} testID="save-expense-button" />
+          onPress={() => createM.mutate({ amount: parseFloat(amt) || 0, category: cat, vendor, description: desc, bill_url: billPath })} testID="save-expense-button" />
       </BottomSheet>
     </View>
   );
@@ -100,4 +119,5 @@ const styles = StyleSheet.create({
   amt: { color: colors.error, fontFamily: fonts.display, fontSize: 20, fontWeight: "700" },
   approveBtn: { marginTop: spacing.md, alignSelf: "flex-start", paddingHorizontal: spacing.lg, paddingVertical: 8, borderRadius: radius.pill, backgroundColor: colors.success },
   approveTxt: { color: colors.onSuccess, fontWeight: "700", fontSize: 12, textTransform: "uppercase", letterSpacing: 0.5 },
+  attach: { paddingVertical: 12, paddingHorizontal: spacing.lg, borderRadius: radius.md, borderWidth: 1, borderColor: colors.brandPrimary, borderStyle: "dashed", alignItems: "center", marginBottom: spacing.md },
 });

@@ -1,10 +1,11 @@
 """Vinayaka Seva - Ganesh Chaturthi Committee backend."""
-from fastapi import FastAPI, APIRouter, HTTPException, Request, Depends, Header
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, APIRouter, HTTPException, Request, Depends, Header, UploadFile, File, Query
+from fastapi.responses import StreamingResponse, Response
+from fastapi.concurrency import run_in_threadpool
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
-import os, uuid, logging, httpx, json
+import os, uuid, logging, httpx, json, requests
 from pathlib import Path
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
@@ -18,6 +19,54 @@ client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ["DB_NAME"]]
 
 EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY")
+
+# ---------- Object Storage ----------
+STORAGE_BASE = (os.environ.get("INTEGRATION_PROXY_URL") or "").strip() or "https://integrations.emergentagent.com"
+STORAGE_URL = STORAGE_BASE.rstrip("/") + "/objstore/api/v1/storage"
+APP_NAME = "vinayaka-seva"
+_storage_key: Optional[str] = None
+
+def _init_storage() -> Optional[str]:
+    global _storage_key
+    if _storage_key:
+        return _storage_key
+    if not EMERGENT_LLM_KEY:
+        return None
+    try:
+        r = requests.post(f"{STORAGE_URL}/init", json={"emergent_key": EMERGENT_LLM_KEY}, timeout=30)
+        r.raise_for_status()
+        _storage_key = r.json()["storage_key"]
+    except Exception as e:
+        logging.getLogger("vinayaka").warning("storage init failed: %s", e)
+        _storage_key = None
+    return _storage_key
+
+def _put_object(path: str, data: bytes, content_type: str):
+    key = _init_storage()
+    if not key:
+        raise RuntimeError("storage_unavailable")
+    r = requests.put(f"{STORAGE_URL}/objects/{path}",
+        headers={"X-Storage-Key": key, "Content-Type": content_type}, data=data, timeout=120)
+    if r.status_code == 503:
+        # stale key: reset once, try again
+        globals()["_storage_key"] = None
+        key = _init_storage()
+        if not key:
+            raise RuntimeError("storage_unavailable")
+        r = requests.put(f"{STORAGE_URL}/objects/{path}",
+            headers={"X-Storage-Key": key, "Content-Type": content_type}, data=data, timeout=120)
+    r.raise_for_status()
+    return r.json()
+
+def _get_object(path: str):
+    key = _init_storage()
+    if not key:
+        raise RuntimeError("storage_unavailable")
+    r = requests.get(f"{STORAGE_URL}/objects/{path}",
+        headers={"X-Storage-Key": key}, timeout=60)
+    if r.status_code >= 400:
+        raise RuntimeError(f"storage_get_failed_{r.status_code}")
+    return r.content, r.headers.get("Content-Type", "application/octet-stream")
 
 app = FastAPI(title="Vinayaka Seva API")
 api = APIRouter(prefix="/api")
@@ -95,6 +144,7 @@ class AnnouncementIn(BaseModel):
     title: str
     body: str
     pinned: bool = False
+    image_url: Optional[str] = None
 
 class EventIn(BaseModel):
     title: str
@@ -564,6 +614,167 @@ async def seed(user: dict = Depends(require_role("President"))):
 async def root():
     return {"app": "Vinayaka Seva", "ok": True}
 
+# ---------- Uploads / Files ----------
+@api.post("/upload")
+async def upload_file(file: UploadFile = File(...),
+                      folder: str = Query("misc"),
+                      user: dict = Depends(get_current_user)):
+    ext = ""
+    if file.filename and "." in file.filename:
+        ext = "." + file.filename.rsplit(".", 1)[-1].lower()
+    path = f"{APP_NAME}/uploads/{folder}/{user['user_id']}/{uuid.uuid4().hex}{ext}"
+    content = await file.read()
+    ct = file.content_type or "application/octet-stream"
+    try:
+        await run_in_threadpool(_put_object, path, content, ct)
+    except Exception as e:
+        raise HTTPException(502, f"upload_failed: {e}")
+    await db.uploads.insert_one({
+        "upload_id": uid("up"), "storage_path": path, "owner_id": user["user_id"],
+        "owner_name": user["name"], "content_type": ct, "size": len(content),
+        "folder": folder, "original_name": file.filename, "created_at": now_utc(),
+    })
+    return {"storage_path": path, "url": f"/api/files/{path}", "size": len(content)}
+
+@api.get("/files/{full_path:path}")
+async def download_file(full_path: str, token: Optional[str] = Query(None),
+                        authorization: Optional[str] = Header(None)):
+    # Accept token via header OR query param (web <img>)
+    session_token = None
+    if authorization and authorization.startswith("Bearer "):
+        session_token = authorization.split(" ", 1)[1]
+    elif token:
+        session_token = token
+    if not session_token:
+        raise HTTPException(401, "Missing token")
+    sess = await db.user_sessions.find_one({"session_token": session_token}, {"_id": 0})
+    if not sess:
+        raise HTTPException(401, "Invalid session")
+    # Any authenticated committee member can view files
+    try:
+        data, ct = await run_in_threadpool(_get_object, full_path)
+    except Exception:
+        raise HTTPException(404, "not_found")
+    return Response(content=data, media_type=ct, headers={"Cache-Control": "private, max-age=86400"})
+
+# ---------- Gallery ----------
+class GalleryIn(BaseModel):
+    storage_path: str
+    caption: Optional[str] = ""
+    category: str = "general"  # aarti, decoration, cultural, annadanam, general
+
+@api.get("/gallery")
+async def gallery_list(user: dict = Depends(get_current_user)):
+    items = await db.gallery.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return [clean(x) for x in items]
+
+@api.post("/gallery")
+async def gallery_add(body: GalleryIn, user: dict = Depends(get_current_user)):
+    doc = body.dict()
+    doc["photo_id"] = uid("ph")
+    doc["created_at"] = now_utc()
+    doc["by_id"] = user["user_id"]
+    doc["by_name"] = user["name"]
+    await db.gallery.insert_one(doc)
+    return clean({**doc})
+
+@api.delete("/gallery/{photo_id}")
+async def gallery_delete(photo_id: str, user: dict = Depends(get_current_user)):
+    doc = await db.gallery.find_one({"photo_id": photo_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "not_found")
+    if doc.get("by_id") != user["user_id"] and user.get("role") not in ("President", "Vice President", "Secretary"):
+        raise HTTPException(403, "not_your_photo")
+    await db.gallery.update_one({"photo_id": photo_id}, {"$set": {"deleted_at": now_utc()}})
+    await db.gallery.delete_one({"photo_id": photo_id})
+    return {"ok": True}
+
+# ---------- Polls / Committee Decisions ----------
+class PollIn(BaseModel):
+    question: str
+    options: List[str]
+    anonymous: bool = False
+    closes_at: Optional[str] = None
+
+class PollVote(BaseModel):
+    option_index: int
+
+@api.get("/polls")
+async def polls_list(user: dict = Depends(get_current_user)):
+    items = await db.polls.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    out = []
+    for p in items:
+        p = clean(p) or {}
+        votes = p.get("votes", [])
+        my_vote = next((v.get("option_index") for v in votes if v.get("user_id") == user["user_id"]), None)
+        counts = [0] * len(p.get("options", []))
+        for v in votes:
+            idx = v.get("option_index", -1)
+            if 0 <= idx < len(counts):
+                counts[idx] += 1
+        # Hide voter identity if anonymous
+        display_votes = [] if p.get("anonymous") else [
+            {"user_name": v.get("user_name"), "user_role": v.get("user_role"),
+             "option_index": v.get("option_index"), "at": v.get("at")}
+            for v in votes
+        ]
+        out.append({**p, "counts": counts, "total_votes": len(votes),
+                    "my_vote": my_vote, "voters": display_votes})
+    return out
+
+@api.post("/polls")
+async def polls_create(body: PollIn, user: dict = Depends(get_current_user)):
+    if len(body.options) < 2:
+        raise HTTPException(400, "min_two_options")
+    doc = {
+        "poll_id": uid("poll"),
+        "question": body.question,
+        "options": body.options,
+        "anonymous": body.anonymous,
+        "closes_at": body.closes_at,
+        "created_at": now_utc(),
+        "created_by_id": user["user_id"],
+        "created_by_name": user["name"],
+        "created_by_role": user["role"],
+        "votes": [],
+        "status": "open",
+    }
+    await db.polls.insert_one(doc)
+    return clean({**doc, "counts": [0] * len(body.options), "total_votes": 0, "my_vote": None, "voters": []})
+
+@api.post("/polls/{poll_id}/vote")
+async def polls_vote(poll_id: str, body: PollVote, user: dict = Depends(get_current_user)):
+    poll = await db.polls.find_one({"poll_id": poll_id}, {"_id": 0})
+    if not poll:
+        raise HTTPException(404, "poll_not_found")
+    if poll.get("status") != "open":
+        raise HTTPException(400, "poll_closed")
+    if body.option_index < 0 or body.option_index >= len(poll.get("options", [])):
+        raise HTTPException(400, "bad_option")
+    # one vote per user (upsert-style)
+    await db.polls.update_one({"poll_id": poll_id},
+        {"$pull": {"votes": {"user_id": user["user_id"]}}})
+    await db.polls.update_one({"poll_id": poll_id},
+        {"$push": {"votes": {
+            "user_id": user["user_id"],
+            "user_name": user["name"],
+            "user_role": user["role"],
+            "option_index": body.option_index,
+            "at": now_utc().isoformat(),
+        }}})
+    return {"ok": True}
+
+@api.post("/polls/{poll_id}/close")
+async def polls_close(poll_id: str, user: dict = Depends(get_current_user)):
+    poll = await db.polls.find_one({"poll_id": poll_id}, {"_id": 0})
+    if not poll:
+        raise HTTPException(404, "poll_not_found")
+    if poll.get("created_by_id") != user["user_id"] and user.get("role") not in ("President", "Vice President", "Secretary"):
+        raise HTTPException(403, "not_allowed")
+    await db.polls.update_one({"poll_id": poll_id}, {"$set": {"status": "closed", "closed_at": now_utc()}})
+    return {"ok": True}
+
+# ---------- Include router ----------
 app.include_router(api)
 
 app.add_middleware(
@@ -581,6 +792,10 @@ async def on_start():
     await db.user_sessions.create_index("session_token", unique=True)
     await db.user_sessions.create_index("user_id")
     await db.user_sessions.create_index("expires_at", expireAfterSeconds=0)
+    try:
+        _init_storage()
+    except Exception as e:
+        logger.warning("storage init on startup: %s", e)
     logger.info("Vinayaka Seva ready")
 
 @app.on_event("shutdown")

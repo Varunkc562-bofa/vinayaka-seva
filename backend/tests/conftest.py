@@ -83,6 +83,19 @@ def regular_member(mongo_db):
 
 
 @pytest.fixture(scope="session")
+def second_member(mongo_db):
+    user = _make_user(mongo_db, "Regular Member", "member2")
+    yield user
+    mongo_db.user_sessions.delete_one({"session_token": user["token"]})
+    mongo_db.users.delete_one({"user_id": user["user_id"]})
+
+
+@pytest.fixture(scope="session")
+def second_member_headers(second_member):
+    return {"Authorization": f"Bearer {second_member['token']}", "Content-Type": "application/json"}
+
+
+@pytest.fixture(scope="session")
 def president_headers(president):
     return {"Authorization": f"Bearer {president['token']}", "Content-Type": "application/json"}
 

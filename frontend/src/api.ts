@@ -91,4 +91,43 @@ export const api = {
   seed: () => request("/dev/seed", { method: "POST" }),
 
   aiHistory: () => request("/ai/history"),
+
+  // Gallery
+  gallery: () => request("/gallery"),
+  addGallery: (d: any) => request("/gallery", { method: "POST", body: JSON.stringify(d) }),
+  deleteGallery: (id: string) => request(`/gallery/${id}`, { method: "DELETE" }),
+
+  // Polls
+  polls: () => request("/polls"),
+  createPoll: (d: any) => request("/polls", { method: "POST", body: JSON.stringify(d) }),
+  vote: (id: string, option_index: number) => request(`/polls/${id}/vote`, {
+    method: "POST", body: JSON.stringify({ option_index }),
+  }),
+  closePoll: (id: string) => request(`/polls/${id}/close`, { method: "POST" }),
 };
+
+// Multipart file upload — returns { storage_path, url, size }
+export async function uploadFile(uri: string, folder: string, name = "upload.jpg", type = "image/jpeg") {
+  const token = await getToken();
+  const form = new FormData();
+  if (typeof window !== "undefined" && typeof (globalThis as any).document !== "undefined") {
+    // web: real Blob
+    const blob = await (await fetch(uri)).blob();
+    form.append("file", blob, name);
+  } else {
+    form.append("file", { uri, name, type } as any);
+  }
+  const res = await fetch(`${API}/upload?folder=${encodeURIComponent(folder)}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: form as any,
+  });
+  if (!res.ok) throw new Error(await res.text().catch(() => `HTTP ${res.status}`));
+  return res.json();
+}
+
+// Build an authenticated file URL suitable for expo-image
+export async function fileUrl(storagePath: string): Promise<string> {
+  const token = await getToken();
+  return `${API}/files/${storagePath}?token=${encodeURIComponent(token || "")}`;
+}

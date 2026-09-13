@@ -10,9 +10,11 @@ const MODULES = [
   { key: "donations", label: "Donations", symbol: "₹", route: "/module/donations", tint: "#E65100" },
   { key: "expenses", label: "Expenses", symbol: "₹", route: "/module/expenses", tint: "#800000" },
   { key: "seva-ai", label: "Seva AI", symbol: "ॐ", route: "/module/seva-ai", tint: "#D4AF37" },
-  { key: "announcements", label: "Announcements", symbol: "📣", route: "/module/announcements", tint: "#F57F17" },
-  { key: "shifts", label: "Shifts", symbol: "⏱", route: "/module/shifts", tint: "#2E7D32" },
-  { key: "profile", label: "Profile", symbol: "🌸", route: "/module/profile", tint: "#4E342E" },
+  { key: "announcements", label: "Announce", symbol: "📣", route: "/module/announcements", tint: "#F57F17" },
+  { key: "gallery", label: "Gallery", symbol: "🖼", route: "/module/gallery", tint: "#2E7D32" },
+  { key: "polls", label: "Decisions", symbol: "🗳", route: "/module/polls", tint: "#4E342E" },
+  { key: "shifts", label: "Shifts", symbol: "⏱", route: "/module/shifts", tint: "#6B4E3D" },
+  { key: "profile", label: "Profile", symbol: "🌸", route: "/module/profile", tint: "#8B6B00" },
 ];
 
 export default function More() {

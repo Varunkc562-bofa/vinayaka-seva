@@ -1,0 +1,49 @@
+{
+  "summary": "Backend-only regression + new-feature testing for Vinayaka Seva v2 (uploads, files, gallery, polls). Added /app/backend/tests/test_vinayaka_v2.py with 20 new tests and a second_member fixture in conftest.py. Full suite (48 tests = 28 old + 20 new) passes both sequentially (-n 0) and under the default parallel xdist config (-n 2 --dist loadscope). No regressions. Emergent Object Storage init succeeded via EMERGENT_LLM_KEY in backend/.env, so upload/file endpoints were fully exercised (upload 1x1 PNG -> download returns identical bytes; 401 for missing/invalid tokens). Gallery CRUD verified end-to-end including RBAC (owner-can-delete, non-owner regular member gets 403, President can delete anyone). Polls verified: min-2-options 400 validation, out-of-range vote 400, one-vote-per-user (double-vote from same user tallies once), multi-user tally with counts+voters (name+role), anonymous polls hide voter identity while still tallying counts, poll close by creator (subsequent vote returns 400 'poll_closed'), non-creator non-officer cannot close (403).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "DELETE /api/gallery/{id}", "issue": "Handler first sets deleted_at then immediately delete_one — the update_one soft-delete write is dead code (row is hard-deleted next). Either drop the update_one or convert to a real soft-delete."},
+      {"endpoint": "POST /api/dev/seed", "issue": "(carried over from iteration 1) Still destructive: wipes donations/expenses/tasks/announcements/events. Not affecting new tests since seed does not touch gallery/polls/uploads."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_vinayaka_v2.py",
+    "/app/backend/tests/test_vinayaka_backend.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/pytest_results.xml",
+    "/app/test_reports/pytest/pytest_v2_results.xml"
+  ],
+  "action_items": [
+    "Optional cleanup: in DELETE /api/gallery/{photo_id} remove the useless update_one({'$set': {'deleted_at': ...}}) that runs right before delete_one — it never persists.",
+    "Optional: consider one-vote-per-user via a Mongo $addToSet or unique compound index on (poll_id, user_id) instead of pull+push, to be race-safe under concurrent votes.",
+    "(Carried over) Guard POST /api/dev/seed with an env flag (e.g. DEMO_MODE=true) so it cannot accidentally wipe real data.",
+    "No frontend testing was requested (testing_type=backend only)."
+  ],
+  "critical_code_review_comments": [
+    "Good: /api/upload streams the file via run_in_threadpool so the async event loop isn't blocked by the requests.put call.",
+    "Good: /api/files/{path} accepts token from both Authorization header and ?token= query — needed for RN <Image> src usage on web.",
+    "Good: EMERGENT_LLM_KEY only used server-side; storage_key cached and refreshed on 503 (stale key handling looks correct).",
+    "Minor: /api/gallery/{id} DELETE — the update_one for soft-delete is dead code because delete_one runs unconditionally right after. Either drop it or make deletion soft.",
+    "Minor: Polls one-vote-per-user is implemented as sequential $pull then $push (two writes, not atomic). Under concurrent duplicate votes from the same user this could race. Consider a single update with $pull + $push in one op or a unique compound index (poll_id, votes.user_id).",
+    "Minor: /api/polls list endpoint reveals created_by_role/created_by_name even for anonymous polls — that's fine (creator is not a voter) but worth noting so it doesn't get 'fixed' later.",
+    "Good: All new endpoints exclude MongoDB _id via projection {'_id': 0} + clean() helper.",
+    "server.py is now ~800 lines — past the 700-line threshold; recommend splitting into modules (auth, tasks, donations, expenses, announcements, events, uploads, gallery, polls, ai) for maintainability."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_vinayaka_v2.py (new — 20 tests)",
+    "/app/backend/tests/conftest.py (added second_member + second_member_headers fixtures)"
+  ],
+  "success_rate": {"backend": "100% (48/48 including 20 new; passes both -n 0 and default -n 2 --dist loadscope)", "frontend": "not tested"},
+  "seed_data_creation": "Reused iteration-1 auth-bypass pattern (President + Regular Member session tokens inserted directly into MongoDB). Added a second Regular Member fixture (second_member/second_member_headers) needed for multi-voter poll tests. Gallery tests wipe db.gallery at start of the class for a clean baseline; polls tests wipe db.polls at start of TestPolls.test_create_poll. All test data is TEST_-prefixed and cleaned up in session-scope teardown.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Auth-bypass fixture pattern documented in conftest.py — insert into db.users {user_id, email, name, role} + db.user_sessions {session_token, user_id, expires_at (tz-aware)} then send Authorization: Bearer <session_token>. For voting/multi-user flows use fixtures: president_headers, member_headers, second_member_headers. Emergent Object Storage init requires EMERGENT_LLM_KEY in backend/.env; if init returns 502 the upload/download tests self-skip with a warning (see TestUploadsAndFiles.storage_unavailable). server.py is ~800 lines and approaching the split threshold.",
+  "rca_of_issue": "No unresolved issues. Iteration-1's parallel seed race did not reappear in this run (48/48 under default -n 2 --dist loadscope); loadscope now pins TestSeedAndDashboard and TestExpenses onto the same worker in current collection order. If it recurs, the fix remains: run with -n 0 or make /api/dev/seed non-destructive."
+}

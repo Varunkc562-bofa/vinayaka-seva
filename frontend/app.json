@@ -9,14 +9,18 @@
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.emergent.festivalhub.qk786z"
+      "bundleIdentifier": "com.emergent.festivalhub.qk786z",
+      "infoPlist": {
+        "NSPhotoLibraryUsageDescription": "Attach photos to bills, announcements and the community gallery"
+      }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#000000"
       },
-      "package": "com.emergent.festivalhub.qk786z"
+      "package": "com.emergent.festivalhub.qk786z",
+      "permissions": ["READ_MEDIA_IMAGES"]
     },
     "web": {
       "bundler": "metro",
@@ -38,7 +42,11 @@
       "expo-image",
       "expo-secure-store",
       "expo-web-browser",
-      "expo-status-bar"
+      "expo-status-bar",
+      [
+        "expo-image-picker",
+        { "photosPermission": "Attach photos to bills, announcements and gallery" }
+      ]
     ],
     "experiments": {
       "typedRoutes": true
