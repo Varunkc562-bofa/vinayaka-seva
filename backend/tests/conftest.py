@@ -42,11 +42,29 @@ def api_client():
     return s
 
 
-def _make_user(mongo_db, role: str, email_prefix: str = "test"):
+def _ensure_test_committee(mongo_db):
+    """Ensure a shared TEST committee exists for the regression test session."""
+    com = mongo_db.committees.find_one({"code": "TESTCO"})
+    if com:
+        return com["committee_id"]
+    committee_id = f"com_{uuid.uuid4().hex[:12]}"
+    mongo_db.committees.insert_one({
+        "committee_id": committee_id,
+        "name": "TEST Committee",
+        "code": "TESTCO",
+        "created_by": None,
+        "created_at": datetime.now(timezone.utc),
+    })
+    return committee_id
+
+
+def _make_user(mongo_db, role: str, email_prefix: str = "test", committee_id: str = None):
     user_id = f"user_{uuid.uuid4().hex[:12]}"
     email = f"TEST_{email_prefix}_{uuid.uuid4().hex[:6]}@example.com"
     token = f"TEST_tok_{uuid.uuid4().hex}"
     now = datetime.now(timezone.utc)
+    if committee_id is None:
+        committee_id = _ensure_test_committee(mongo_db)
     mongo_db.users.insert_one({
         "user_id": user_id,
         "email": email,
@@ -54,6 +72,7 @@ def _make_user(mongo_db, role: str, email_prefix: str = "test"):
         "role": role,
         "picture": None,
         "phone": None,
+        "committee_id": committee_id,
         "created_at": now,
     })
     mongo_db.user_sessions.insert_one({
@@ -62,7 +81,8 @@ def _make_user(mongo_db, role: str, email_prefix: str = "test"):
         "expires_at": now + timedelta(days=1),
         "created_at": now,
     })
-    return {"user_id": user_id, "email": email, "token": token, "role": role, "name": f"Test {role}"}
+    return {"user_id": user_id, "email": email, "token": token, "role": role,
+            "name": f"Test {role}", "committee_id": committee_id}
 
 
 @pytest.fixture(scope="session")

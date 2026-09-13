@@ -20,8 +20,14 @@ function Gate() {
     if (loading) return;
     const inTabs = segments[0] === "(tabs)";
     const onLogin = segments[0] === "login";
-    if (!user && !onLogin) router.replace("/login");
-    else if (user && onLogin) router.replace("/(tabs)/home");
+    const onCommittee = segments[0] === "committee";
+    if (!user && !onLogin) {
+      router.replace("/login");
+    } else if (user && !user.committee_id && !onCommittee) {
+      router.replace("/committee");
+    } else if (user && user.committee_id && (onLogin || onCommittee)) {
+      router.replace("/(tabs)/home");
+    }
   }, [user, loading, segments, router]);
 
   if (loading) {

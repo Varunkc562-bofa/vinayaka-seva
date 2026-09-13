@@ -163,7 +163,7 @@ class TestDashboard:
 
 # ---------- Backward Compatibility: legacy donations w/o paid_amount ----------
 class TestBackwardCompat:
-    def test_legacy_donation_treated_as_paid(self, api_client, base_url, president_headers, mongo_db):
+    def test_legacy_donation_treated_as_paid(self, api_client, base_url, president_headers, mongo_db, president):
         # Baseline dashboard
         b = api_client.get(f"{base_url}/api/dashboard", headers=president_headers).json()
         base_total = float(b["total_donations"])
@@ -173,6 +173,7 @@ class TestBackwardCompat:
         legacy_id = f"don_legacy_{uuid.uuid4().hex[:8]}"
         mongo_db.donations.insert_one({
             "donation_id": legacy_id,
+            "committee_id": president["committee_id"],
             "donor_name": "TEST_Legacy",
             "amount": 750.0,
             "mode": "cash",

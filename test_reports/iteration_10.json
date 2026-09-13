@@ -1,0 +1,46 @@
+{
+  "summary": "Multi-tenancy (committees) backend verification - ALL 99/99 tests PASS (parallel and serial). Added /app/backend/tests/test_committees.py with 11 new tests covering: POST /api/committees (auth required 401, blank name 400, success returns 6-char code with correct alphabet + promotes user to President + /auth/me reflects committee_id), POST /api/committees/join (wrong code -> 404 with detail='committee_not_found', correct code -> role='Regular Member' + committee_id set), POST /api/committees/leave (clears committee_id, role -> Regular Member, /committees/me -> null), GET /api/committees/me (null when no committee, {committee_id,name,code,member_count} when present), 428 gate on 9 domain endpoints (/api/dashboard, /api/donations, /api/tasks, /api/announcements, /api/events, /api/gallery, /api/polls, /api/members, /api/rsvp/summary) all return 428 with detail='no_committee', full data isolation across committees (donations, tasks, dashboard totals=0 for other committee), join-grants-access (User C joining CA sees CA's donations+tasks), POST /api/dev/seed scoped to caller's committee only (B remains empty). Regression: updated conftest.py to create a shared TEST committee and auto-set committee_id on seeded users (president/regular_member/second_member), and fixed test_donations_expenses_v4.py::test_legacy_donation_treated_as_paid to include committee_id on direct-Mongo insert. All 88 prior regression tests still pass. New tests: 11/11 always PASS.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_committees.py",
+    "/app/test_reports/pytest/pytest_committees.xml",
+    "/app/test_reports/pytest/pytest_iter10_serial.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py:81-84 gen_join_code alphabet is 'ABCDEFGHJKMNPQRSTUVWXYZ23456789' (31 chars) - excludes O/0/I/1/L as required. Correct.",
+    "server.py:309-328 POST /api/committees generates unique code (retries up to 10) and promotes creator to President. Correct.",
+    "server.py:330-342 POST /api/committees/join preserves role if user is already a member of THIS committee (line 339 keep_role logic). Correct.",
+    "server.py:234-246 require_committee raises 428 'no_committee' and cscope filters by committee_id. Applied consistently to donations, expenses, tasks, events, announcements, gallery, polls, rsvps, members, dashboard, shifts, ai/chat via get_user_with_committee. Correct.",
+    "server.py:864-943 POST /api/dev/seed uses cscope(user) for delete_many() and inserts include committee_id=cid. So seed is now safely scoped to caller's committee. Correct.",
+    "server.py:1121-1156 startup on_start creates LEGACY committee and backfills committee_id on legacy docs across users/donations/expenses/tasks/announcements/events/shifts/rsvps/gallery/polls. Correct.",
+    "server.py:1123-1130 correctly adds committee_id index on users and unique index on committees.code / committees.committee_id.",
+    "Minor: AI history endpoint /api/ai/history (line 856) uses get_current_user (not get_user_with_committee) - by design, since it's just fetching messages by user_id, but this means a user with no committee CAN call it. Not a security issue since it only returns their own messages. Acceptable.",
+    "Minor: /api/config/festival and /api/roles are correctly NOT committee-gated (global config).",
+    "Nit: /api/upload uses get_current_user (not committee gate). This is fine because storage_path already namespaces by user_id and files are auth-gated on download.",
+    "server.py:750 dashboard counts volunteers as db.users.count with cscope + role filter — correctly scoped to same committee only."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_committees.py (new - 11 tests, 285 lines)",
+    "/app/backend/tests/conftest.py (added _ensure_test_committee helper; _make_user now sets committee_id on all seeded users to a shared TESTCO committee)",
+    "/app/backend/tests/test_donations_expenses_v4.py (test_legacy_donation_treated_as_paid: added committee_id=president['committee_id'] to direct-Mongo insert so the legacy-shape simulation still belongs to the president's committee)"
+  ],
+  "success_rate": {
+    "backend": "99/99 (100%) in both parallel and serial runs, confirmed across 3 back-to-back runs",
+    "frontend": "not tested (backend-only request)"
+  },
+  "seed_data_creation": "conftest.py now creates a single shared TEST committee (code='TESTCO') on first fixture use. All three session-scoped test users (president/regular_member/second_member) share this committee_id so pre-existing regression tests that assume cross-user visibility continue to work. New tests in test_committees.py create ephemeral committees per test and clean them up (delete their donations/tasks/etc + the committee doc) in fixture teardown.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "1) Multi-tenancy verified end-to-end: every domain endpoint is committee-scoped, 428 gate works, isolation holds, join transfers access, seed is scoped. 2) conftest.py._ensure_test_committee is idempotent (looks up by code='TESTCO'). It leaves that committee doc in Mongo across runs, which is intentional and safe. 3) test_committees.py fixtures create bare users (committee_id=None) so they can be tested against 428 gate and committee create/join flows. 4) The previous flake in test_vinayaka_backend::TestExpenses::test_approve_as_president caused by TestSeed's delete_many is now moot because seed only wipes the caller's committee (see server.py:869-873). 5) Legacy backfill on startup (server.py:1134-1149) covers pre-existing docs; new direct-Mongo inserts by tests should always include committee_id.",
+  "rca_of_issue": "Initial parallel run showed 33 errors + 9 failures because the old conftest.py inserted users WITHOUT committee_id, so every fixture-consuming test hit 428 on the first API call. Also, test_legacy_donation_treated_as_paid inserted a donation with no committee_id, so it wasn't visible to president (whose committee is TESTCO). Fixes: (a) conftest now assigns TESTCO committee_id to every seeded user, (b) the legacy test now includes committee_id on the direct-Mongo insert to simulate a legacy row inside the president's committee. After fixes: 99/99 pass in parallel and serial, confirmed with 3 back-to-back parallel runs."
+}

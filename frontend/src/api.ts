@@ -93,6 +93,12 @@ export const api = {
   events: () => request("/events"),
   createEvent: (e: any) => request("/events", { method: "POST", body: JSON.stringify(e) }),
 
+  // Committee endpoints
+  myCommittee: () => request("/committees/me"),
+  createCommittee: (name: string) => request("/committees", { method: "POST", body: JSON.stringify({ name }) }),
+  joinCommittee: (code: string) => request("/committees/join", { method: "POST", body: JSON.stringify({ code }) }),
+  leaveCommittee: () => request("/committees/leave", { method: "POST" }),
+
   seed: () => request("/dev/seed", { method: "POST" }),
 
   aiHistory: () => request("/ai/history"),

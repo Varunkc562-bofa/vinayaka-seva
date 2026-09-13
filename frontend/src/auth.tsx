@@ -8,7 +8,7 @@ WebBrowser.maybeCompleteAuthSession();
 
 export type User = {
   user_id: string; email: string; name: string; picture?: string;
-  role: string; phone?: string;
+  role: string; phone?: string; committee_id?: string | null;
 };
 
 type AuthCtx = {

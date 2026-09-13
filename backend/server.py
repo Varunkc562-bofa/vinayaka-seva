@@ -5,7 +5,7 @@ from fastapi.concurrency import run_in_threadpool
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
-import os, uuid, logging, httpx, json, requests
+import os, uuid, logging, httpx, json, requests, secrets, string
 from pathlib import Path
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
@@ -77,6 +77,11 @@ logger = logging.getLogger("vinayaka")
 # ---------- Utility ----------
 def uid(prefix: str = "id") -> str:
     return f"{prefix}_{uuid.uuid4().hex[:12]}"
+
+def gen_join_code() -> str:
+    # 6-char, no ambiguous chars (no 0/O, 1/I/L)
+    alphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+    return "".join(secrets.choice(alphabet) for _ in range(6))
 
 def now_utc() -> datetime:
     return datetime.now(timezone.utc)
@@ -226,6 +231,24 @@ def require_role(*roles):
         return user
     return dep
 
+def require_committee(user: dict) -> str:
+    cid = user.get("committee_id")
+    if not cid:
+        raise HTTPException(status_code=428, detail="no_committee")
+    return cid
+
+async def get_user_with_committee(user: dict = Depends(get_current_user)) -> dict:
+    require_committee(user)
+    return user
+
+def cscope(user: dict) -> Dict[str, Any]:
+    """Mongo filter to scope a query to the current user's committee."""
+    return {"committee_id": user["committee_id"]}
+
+def crole(user: dict, *roles: str) -> None:
+    if user.get("role") not in roles:
+        raise HTTPException(403, "Forbidden")
+
 # ---------- Auth ----------
 @api.post("/auth/session")
 async def auth_session(body: SessionExchange):
@@ -242,18 +265,15 @@ async def auth_session(body: SessionExchange):
     existing = await db.users.find_one({"email": email}, {"_id": 0})
     if existing:
         user_id = existing["user_id"]
-        role = existing.get("role", "Regular Member")
     else:
         user_id = uid("user")
-        # First registered user becomes President for demo
-        count = await db.users.count_documents({})
-        role = "President" if count == 0 else "Regular Member"
         await db.users.insert_one({
             "user_id": user_id,
             "email": email,
             "name": data.get("name") or email.split("@")[0],
             "picture": data.get("picture"),
-            "role": role,
+            "role": "Regular Member",
+            "committee_id": None,   # user chooses/creates committee after login
             "phone": None,
             "created_at": now_utc(),
         })
@@ -279,17 +299,81 @@ async def logout(authorization: Optional[str] = Header(None)):
         await db.user_sessions.delete_one({"session_token": token})
     return {"ok": True}
 
+# ---------- Committees ----------
+class CommitteeCreate(BaseModel):
+    name: str
+
+class CommitteeJoin(BaseModel):
+    code: str
+
+@api.post("/committees")
+async def create_committee(body: CommitteeCreate, user: dict = Depends(get_current_user)):
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(400, "name_required")
+    # generate a unique join code
+    for _ in range(10):
+        code = gen_join_code()
+        if not await db.committees.find_one({"code": code}):
+            break
+    else:
+        raise HTTPException(500, "could_not_generate_code")
+    committee_id = uid("com")
+    await db.committees.insert_one({
+        "committee_id": committee_id, "name": name, "code": code,
+        "created_by": user["user_id"], "created_at": now_utc(),
+    })
+    await db.users.update_one({"user_id": user["user_id"]},
+        {"$set": {"committee_id": committee_id, "role": "President"}})
+    return {"committee_id": committee_id, "name": name, "code": code, "role": "President"}
+
+@api.post("/committees/join")
+async def join_committee(body: CommitteeJoin, user: dict = Depends(get_current_user)):
+    code = (body.code or "").strip().upper()
+    if not code:
+        raise HTTPException(400, "code_required")
+    com = await db.committees.find_one({"code": code}, {"_id": 0})
+    if not com:
+        raise HTTPException(404, "committee_not_found")
+    # keep role if already a member of this committee; else Regular Member
+    keep_role = user.get("role", "Regular Member") if user.get("committee_id") == com["committee_id"] else "Regular Member"
+    await db.users.update_one({"user_id": user["user_id"]},
+        {"$set": {"committee_id": com["committee_id"], "role": keep_role}})
+    return {"committee_id": com["committee_id"], "name": com["name"], "code": com["code"], "role": keep_role}
+
+@api.post("/committees/leave")
+async def leave_committee(user: dict = Depends(get_current_user)):
+    await db.users.update_one({"user_id": user["user_id"]},
+        {"$set": {"committee_id": None, "role": "Regular Member"}})
+    return {"ok": True}
+
+@api.get("/committees/me")
+async def my_committee(user: dict = Depends(get_current_user)):
+    cid = user.get("committee_id")
+    if not cid:
+        return None
+    com = await db.committees.find_one({"committee_id": cid}, {"_id": 0})
+    if not com:
+        return None
+    members = await db.users.count_documents({"committee_id": cid})
+    return {**clean(com), "member_count": members}
+
 # ---------- Members / Roles ----------
 @api.get("/members")
-async def list_members(user: dict = Depends(get_current_user)):
-    items = await db.users.find({}, {"_id": 0}).to_list(500)
+async def list_members(user: dict = Depends(get_user_with_committee)):
+    items = await db.users.find(cscope(user), {"_id": 0}).to_list(500)
     return [clean(m) for m in items]
 
 @api.patch("/members/{member_id}/role")
 async def update_role(member_id: str, body: RoleUpdate,
-                     user: dict = Depends(require_role("President", "Vice President", "Secretary"))):
+                     user: dict = Depends(get_user_with_committee)):
+    crole(user, "President", "Vice President", "Secretary")
     if body.role not in ROLES:
         raise HTTPException(400, "Invalid role")
+    # only members of the same committee
+    target = await db.users.find_one({"user_id": member_id, **cscope(user)}, {"_id": 0})
+    if not target:
+        raise HTTPException(404, "member_not_found")
     await db.users.update_one({"user_id": member_id}, {"$set": {"role": body.role}})
     return {"ok": True}
 
@@ -319,17 +403,18 @@ async def set_festival(body: FestivalConfig,
 
 # ---------- Tasks ----------
 @api.get("/tasks")
-async def list_tasks(mine: bool = False, user: dict = Depends(get_current_user)):
-    q: Dict[str, Any] = {}
+async def list_tasks(mine: bool = False, user: dict = Depends(get_user_with_committee)):
+    q: Dict[str, Any] = {**cscope(user)}
     if mine:
         q["assignee_id"] = user["user_id"]
     items = await db.tasks.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
     return [clean(t) for t in items]
 
 @api.post("/tasks")
-async def create_task(body: TaskIn, user: dict = Depends(get_current_user)):
+async def create_task(body: TaskIn, user: dict = Depends(get_user_with_committee)):
     task = body.dict()
     task["task_id"] = uid("task")
+    task["committee_id"] = user["committee_id"]
     task["created_at"] = now_utc()
     task["created_by"] = user["user_id"]
     task["created_by_name"] = user["name"]
@@ -339,30 +424,30 @@ async def create_task(body: TaskIn, user: dict = Depends(get_current_user)):
     return clean({**task})
 
 @api.patch("/tasks/{task_id}")
-async def update_task(task_id: str, body: Dict[str, Any], user: dict = Depends(get_current_user)):
+async def update_task(task_id: str, body: Dict[str, Any], user: dict = Depends(get_user_with_committee)):
     body = {k: v for k, v in body.items() if k in {"title", "description", "priority",
               "status", "due_at", "assignee_id", "assignee_name", "photo_url"}}
     if not body:
         raise HTTPException(400, "No valid fields")
     body["updated_at"] = now_utc()
-    await db.tasks.update_one({"task_id": task_id}, {
+    await db.tasks.update_one({"task_id": task_id, **cscope(user)}, {
         "$set": body,
         "$push": {"history": {"at": now_utc().isoformat(), "by": user["name"],
                               "action": "updated", "changes": list(body.keys())}},
     })
-    t = await db.tasks.find_one({"task_id": task_id}, {"_id": 0})
+    t = await db.tasks.find_one({"task_id": task_id, **cscope(user)}, {"_id": 0})
     return clean(t)
 
 @api.post("/tasks/{task_id}/comments")
-async def add_comment(task_id: str, body: TaskComment, user: dict = Depends(get_current_user)):
+async def add_comment(task_id: str, body: TaskComment, user: dict = Depends(get_user_with_committee)):
     entry = {"comment_id": uid("cm"), "text": body.text, "by": user["name"],
              "by_id": user["user_id"], "at": now_utc().isoformat()}
-    await db.tasks.update_one({"task_id": task_id}, {"$push": {"comments": entry}})
+    await db.tasks.update_one({"task_id": task_id, **cscope(user)}, {"$push": {"comments": entry}})
     return entry
 
 @api.delete("/tasks/{task_id}")
-async def delete_task(task_id: str, user: dict = Depends(get_current_user)):
-    await db.tasks.delete_one({"task_id": task_id})
+async def delete_task(task_id: str, user: dict = Depends(get_user_with_committee)):
+    await db.tasks.delete_one({"task_id": task_id, **cscope(user)})
     return {"ok": True}
 
 # ---------- Donations ----------
@@ -425,19 +510,19 @@ def _send_sms_background(donation: dict):
         pass
 
 @api.get("/donations")
-async def list_donations(user: dict = Depends(get_current_user)):
-    items = await db.donations.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+async def list_donations(user: dict = Depends(get_user_with_committee)):
+    items = await db.donations.find(cscope(user), {"_id": 0}).sort("created_at", -1).to_list(500)
     return [clean(d) for d in items]
 
 @api.post("/donations")
-async def create_donation(body: DonationIn, user: dict = Depends(get_current_user)):
+async def create_donation(body: DonationIn, user: dict = Depends(get_user_with_committee)):
     d = body.dict()
     send_sms = d.pop("send_sms", True)
-    # paid_amount defaults to full amount (i.e. complete)
     if d.get("paid_amount") is None:
         d["paid_amount"] = float(d.get("amount") or 0)
     d["paid_amount"] = max(0.0, min(float(d["paid_amount"]), float(d["amount"])))
     d["donation_id"] = uid("don")
+    d["committee_id"] = user["committee_id"]
     d["created_at"] = now_utc()
     d["created_by"] = user["name"]
     await db.donations.insert_one(d)
@@ -448,34 +533,33 @@ async def create_donation(body: DonationIn, user: dict = Depends(get_current_use
     return resp
 
 @api.patch("/donations/{donation_id}")
-async def edit_donation(donation_id: str, body: DonationEdit, user: dict = Depends(get_current_user)):
-    cur = await db.donations.find_one({"donation_id": donation_id}, {"_id": 0})
+async def edit_donation(donation_id: str, body: DonationEdit, user: dict = Depends(get_user_with_committee)):
+    cur = await db.donations.find_one({"donation_id": donation_id, **cscope(user)}, {"_id": 0})
     if not cur:
         raise HTTPException(404, "not_found")
     update = {k: v for k, v in body.dict().items() if v is not None}
     if not update:
         raise HTTPException(400, "no_changes")
-    # Guard paid_amount within [0, amount]
     new_amount = float(update.get("amount", cur.get("amount", 0)))
     new_paid = float(update.get("paid_amount", cur.get("paid_amount", new_amount)))
     new_paid = max(0.0, min(new_paid, new_amount))
     update["amount"] = new_amount
     update["paid_amount"] = new_paid
     update["updated_at"] = now_utc()
-    await db.donations.update_one({"donation_id": donation_id}, {"$set": update})
+    await db.donations.update_one({"donation_id": donation_id, **cscope(user)}, {"$set": update})
     return clean(await db.donations.find_one({"donation_id": donation_id}, {"_id": 0}))
 
 @api.delete("/donations/{donation_id}")
-async def delete_donation(donation_id: str, user: dict = Depends(get_current_user)):
-    cur = await db.donations.find_one({"donation_id": donation_id}, {"_id": 0})
+async def delete_donation(donation_id: str, user: dict = Depends(get_user_with_committee)):
+    cur = await db.donations.find_one({"donation_id": donation_id, **cscope(user)}, {"_id": 0})
     if not cur:
         raise HTTPException(404, "not_found")
-    result = await db.donations.delete_one({"donation_id": donation_id})
+    result = await db.donations.delete_one({"donation_id": donation_id, **cscope(user)})
     return {"ok": True, "deleted": result.deleted_count}
 
 @api.get("/pending-dues")
-async def pending_dues(user: dict = Depends(get_current_user)):
-    items = await db.donations.find({}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+async def pending_dues(user: dict = Depends(get_user_with_committee)):
+    items = await db.donations.find(cscope(user), {"_id": 0}).sort("created_at", -1).to_list(1000)
     out = []
     for d in items:
         amt = float(d.get("amount") or 0)
@@ -522,14 +606,15 @@ async def test_sms(payload: Dict[str, Any],
 
 # ---------- Expenses ----------
 @api.get("/expenses")
-async def list_expenses(user: dict = Depends(get_current_user)):
-    items = await db.expenses.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+async def list_expenses(user: dict = Depends(get_user_with_committee)):
+    items = await db.expenses.find(cscope(user), {"_id": 0}).sort("created_at", -1).to_list(500)
     return [clean(e) for e in items]
 
 @api.post("/expenses")
-async def create_expense(body: ExpenseIn, user: dict = Depends(get_current_user)):
+async def create_expense(body: ExpenseIn, user: dict = Depends(get_user_with_committee)):
     e = body.dict()
     e["expense_id"] = uid("exp")
+    e["committee_id"] = user["committee_id"]
     e["created_at"] = now_utc()
     e["created_by"] = user["name"]
     e["created_by_id"] = user["user_id"]
@@ -537,42 +622,43 @@ async def create_expense(body: ExpenseIn, user: dict = Depends(get_current_user)
     return clean({**e})
 
 @api.patch("/expenses/{expense_id}/approve")
-async def approve_expense(expense_id: str,
-        user: dict = Depends(require_role("President", "Treasurer", "Vice President"))):
-    await db.expenses.update_one({"expense_id": expense_id},
+async def approve_expense(expense_id: str, user: dict = Depends(get_user_with_committee)):
+    crole(user, "President", "Treasurer", "Vice President")
+    await db.expenses.update_one({"expense_id": expense_id, **cscope(user)},
         {"$set": {"approved": True, "approved_by": user["name"], "approved_at": now_utc()}})
     return {"ok": True}
 
 @api.patch("/expenses/{expense_id}")
-async def edit_expense(expense_id: str, body: ExpenseEdit, user: dict = Depends(get_current_user)):
-    cur = await db.expenses.find_one({"expense_id": expense_id}, {"_id": 0})
+async def edit_expense(expense_id: str, body: ExpenseEdit, user: dict = Depends(get_user_with_committee)):
+    cur = await db.expenses.find_one({"expense_id": expense_id, **cscope(user)}, {"_id": 0})
     if not cur:
         raise HTTPException(404, "not_found")
     update = {k: v for k, v in body.dict().items() if v is not None}
     if not update:
         raise HTTPException(400, "no_changes")
     update["updated_at"] = now_utc()
-    await db.expenses.update_one({"expense_id": expense_id}, {"$set": update})
+    await db.expenses.update_one({"expense_id": expense_id, **cscope(user)}, {"$set": update})
     return clean(await db.expenses.find_one({"expense_id": expense_id}, {"_id": 0}))
 
 @api.delete("/expenses/{expense_id}")
-async def delete_expense(expense_id: str, user: dict = Depends(get_current_user)):
-    cur = await db.expenses.find_one({"expense_id": expense_id}, {"_id": 0})
+async def delete_expense(expense_id: str, user: dict = Depends(get_user_with_committee)):
+    cur = await db.expenses.find_one({"expense_id": expense_id, **cscope(user)}, {"_id": 0})
     if not cur:
         raise HTTPException(404, "not_found")
-    result = await db.expenses.delete_one({"expense_id": expense_id})
+    result = await db.expenses.delete_one({"expense_id": expense_id, **cscope(user)})
     return {"ok": True, "deleted": result.deleted_count}
 
 # ---------- Announcements ----------
 @api.get("/announcements")
-async def list_announcements(user: dict = Depends(get_current_user)):
-    items = await db.announcements.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
+async def list_announcements(user: dict = Depends(get_user_with_committee)):
+    items = await db.announcements.find(cscope(user), {"_id": 0}).sort("created_at", -1).to_list(200)
     return [clean(a) for a in items]
 
 @api.post("/announcements")
-async def create_announcement(body: AnnouncementIn, user: dict = Depends(get_current_user)):
+async def create_announcement(body: AnnouncementIn, user: dict = Depends(get_user_with_committee)):
     a = body.dict()
     a["announcement_id"] = uid("ann")
+    a["committee_id"] = user["committee_id"]
     a["created_at"] = now_utc()
     a["author"] = user["name"]
     a["author_role"] = user["role"]
@@ -581,14 +667,15 @@ async def create_announcement(body: AnnouncementIn, user: dict = Depends(get_cur
 
 # ---------- Events ----------
 @api.get("/events")
-async def list_events(user: dict = Depends(get_current_user)):
-    items = await db.events.find({}, {"_id": 0}).sort("starts_at", 1).to_list(300)
+async def list_events(user: dict = Depends(get_user_with_committee)):
+    items = await db.events.find(cscope(user), {"_id": 0}).sort("starts_at", 1).to_list(300)
     return [clean(e) for e in items]
 
 @api.post("/events")
-async def create_event(body: EventIn, user: dict = Depends(get_current_user)):
+async def create_event(body: EventIn, user: dict = Depends(get_user_with_committee)):
     e = body.dict()
     e["event_id"] = uid("evt")
+    e["committee_id"] = user["committee_id"]
     e["created_at"] = now_utc()
     e["created_by"] = user["name"]
     await db.events.insert_one(e)
@@ -596,32 +683,32 @@ async def create_event(body: EventIn, user: dict = Depends(get_current_user)):
 
 # ---------- Event RSVPs (Prasadam Roster) ----------
 @api.get("/events/{event_id}/rsvps")
-async def list_rsvps(event_id: str, user: dict = Depends(get_current_user)):
-    items = await db.rsvps.find({"event_id": event_id}, {"_id": 0}).to_list(500)
+async def list_rsvps(event_id: str, user: dict = Depends(get_user_with_committee)):
+    items = await db.rsvps.find({"event_id": event_id, **cscope(user)}, {"_id": 0}).to_list(500)
     return [clean(r) for r in items]
 
 @api.post("/events/{event_id}/rsvp")
-async def upsert_rsvp(event_id: str, body: RsvpIn, user: dict = Depends(get_current_user)):
+async def upsert_rsvp(event_id: str, body: RsvpIn, user: dict = Depends(get_user_with_committee)):
     if body.status not in ("yes", "maybe", "no"):
         raise HTTPException(400, "bad_status")
     doc = {
-        "event_id": event_id, "user_id": user["user_id"], "user_name": user["name"],
+        "event_id": event_id, "committee_id": user["committee_id"],
+        "user_id": user["user_id"], "user_name": user["name"],
         "user_role": user["role"], "status": body.status,
         "plus_ones": max(0, int(body.plus_ones or 0)), "at": now_utc(),
     }
     await db.rsvps.update_one(
-        {"event_id": event_id, "user_id": user["user_id"]},
+        {"event_id": event_id, "user_id": user["user_id"], **cscope(user)},
         {"$set": doc}, upsert=True,
     )
     return {"ok": True}
 
 @api.get("/rsvp/summary")
-async def rsvp_summary(user: dict = Depends(get_current_user)):
-    """For each upcoming event, return yes/maybe/no counts + total headcount (yes + plus_ones)."""
-    events = await db.events.find({}, {"_id": 0}).sort("starts_at", 1).to_list(200)
+async def rsvp_summary(user: dict = Depends(get_user_with_committee)):
+    events = await db.events.find(cscope(user), {"_id": 0}).sort("starts_at", 1).to_list(200)
     out = []
     for e in events:
-        rsvps = await db.rsvps.find({"event_id": e["event_id"]}, {"_id": 0}).to_list(500)
+        rsvps = await db.rsvps.find({"event_id": e["event_id"], **cscope(user)}, {"_id": 0}).to_list(500)
         yes = [r for r in rsvps if r.get("status") == "yes"]
         maybe = [r for r in rsvps if r.get("status") == "maybe"]
         no = [r for r in rsvps if r.get("status") == "no"]
@@ -634,27 +721,28 @@ async def rsvp_summary(user: dict = Depends(get_current_user)):
 
 # ---------- Volunteer shifts ----------
 @api.get("/shifts")
-async def list_shifts(user: dict = Depends(get_current_user)):
-    items = await db.shifts.find({}, {"_id": 0}).sort("starts_at", 1).to_list(300)
+async def list_shifts(user: dict = Depends(get_user_with_committee)):
+    items = await db.shifts.find(cscope(user), {"_id": 0}).sort("starts_at", 1).to_list(300)
     return [clean(s) for s in items]
 
 @api.post("/shifts")
-async def create_shift(body: VolunteerShiftIn, user: dict = Depends(get_current_user)):
+async def create_shift(body: VolunteerShiftIn, user: dict = Depends(get_user_with_committee)):
     s = body.dict()
     s["shift_id"] = uid("shf")
+    s["committee_id"] = user["committee_id"]
     s["created_at"] = now_utc()
     await db.shifts.insert_one(s)
     return clean({**s})
 
 # ---------- Dashboard ----------
 @api.get("/dashboard")
-async def dashboard(user: dict = Depends(get_current_user)):
-    donations = await db.donations.find({}, {"_id": 0}).to_list(1000)
-    expenses = await db.expenses.find({}, {"_id": 0}).to_list(1000)
-    tasks = await db.tasks.find({}, {"_id": 0}).to_list(1000)
-    events = await db.events.find({}, {"_id": 0}).sort("starts_at", 1).to_list(50)
-    announcements = await db.announcements.find({}, {"_id": 0}).sort("created_at", -1).to_list(5)
-    volunteers = await db.users.count_documents({"role": {"$in": ["Volunteer", "Volunteer Coordinator"]}})
+async def dashboard(user: dict = Depends(get_user_with_committee)):
+    donations = await db.donations.find(cscope(user), {"_id": 0}).to_list(1000)
+    expenses = await db.expenses.find(cscope(user), {"_id": 0}).to_list(1000)
+    tasks = await db.tasks.find(cscope(user), {"_id": 0}).to_list(1000)
+    events = await db.events.find(cscope(user), {"_id": 0}).sort("starts_at", 1).to_list(50)
+    announcements = await db.announcements.find(cscope(user), {"_id": 0}).sort("created_at", -1).to_list(5)
+    volunteers = await db.users.count_documents({**cscope(user), "role": {"$in": ["Volunteer", "Volunteer Coordinator"]}})
     # Collected = paid amounts only. Pending dues = pledged - paid.
     total_donations = 0.0
     pending_dues_total = 0.0
@@ -693,12 +781,12 @@ async def dashboard(user: dict = Depends(get_current_user)):
 
 # ---------- Seva AI ----------
 async def build_context(user: dict) -> str:
-    donations = await db.donations.find({}, {"_id": 0}).to_list(200)
-    expenses = await db.expenses.find({}, {"_id": 0}).to_list(200)
-    tasks = await db.tasks.find({}, {"_id": 0}).to_list(200)
-    events = await db.events.find({}, {"_id": 0}).to_list(100)
-    members = await db.users.find({}, {"_id": 0, "email": 0}).to_list(200)
-    ann = await db.announcements.find({}, {"_id": 0}).sort("created_at", -1).to_list(20)
+    donations = await db.donations.find(cscope(user), {"_id": 0}).to_list(200)
+    expenses = await db.expenses.find(cscope(user), {"_id": 0}).to_list(200)
+    tasks = await db.tasks.find(cscope(user), {"_id": 0}).to_list(200)
+    events = await db.events.find(cscope(user), {"_id": 0}).to_list(100)
+    members = await db.users.find(cscope(user), {"_id": 0, "email": 0}).to_list(200)
+    ann = await db.announcements.find(cscope(user), {"_id": 0}).sort("created_at", -1).to_list(20)
     ctx = {
         "current_user": {"name": user["name"], "role": user["role"]},
         "totals": {
@@ -720,7 +808,7 @@ async def build_context(user: dict) -> str:
     return json.dumps(ctx, default=str)
 
 @api.post("/ai/chat")
-async def ai_chat(body: AIChatIn, user: dict = Depends(get_current_user)):
+async def ai_chat(body: AIChatIn, user: dict = Depends(get_user_with_committee)):
     if not EMERGENT_LLM_KEY:
         raise HTTPException(500, "AI not configured")
     from emergentintegrations.llm.chat import LlmChat, UserMessage, TextDelta, StreamDone
@@ -774,49 +862,51 @@ async def ai_history(session_id: Optional[str] = None, user: dict = Depends(get_
 
 # ---------- Seed demo ----------
 @api.post("/dev/seed")
-async def seed(user: dict = Depends(require_role("President"))):
-    """Seed sample data for demo."""
-    await db.donations.delete_many({})
-    await db.expenses.delete_many({})
-    await db.tasks.delete_many({})
-    await db.announcements.delete_many({})
-    await db.events.delete_many({})
+async def seed(user: dict = Depends(get_user_with_committee)):
+    """Seed sample data for demo in the current committee."""
+    crole(user, "President")
+    cid = user["committee_id"]
+    await db.donations.delete_many(cscope(user))
+    await db.expenses.delete_many(cscope(user))
+    await db.tasks.delete_many(cscope(user))
+    await db.announcements.delete_many(cscope(user))
+    await db.events.delete_many(cscope(user))
 
     now = now_utc()
     donations = [
-        {"donation_id": uid("don"), "donor_name": "Ramesh Kulkarni", "amount": 5000,
+        {"donation_id": uid("don"), "committee_id": cid, "donor_name": "Ramesh Kulkarni", "amount": 5000, "paid_amount": 5000,
          "mode": "cash", "note": "Family donation", "created_at": now, "created_by": "System"},
-        {"donation_id": uid("don"), "donor_name": "Priya Sharma", "amount": 2100,
+        {"donation_id": uid("don"), "committee_id": cid, "donor_name": "Priya Sharma", "amount": 2100, "paid_amount": 2100,
          "mode": "upi", "note": "", "created_at": now, "created_by": "System"},
-        {"donation_id": uid("don"), "donor_name": "Ganesh Tea Stall", "amount": 1100,
+        {"donation_id": uid("don"), "committee_id": cid, "donor_name": "Ganesh Tea Stall", "amount": 1100, "paid_amount": 1100,
          "mode": "cash", "note": "Business", "created_at": now, "created_by": "System"},
     ]
     await db.donations.insert_many(donations)
 
     expenses = [
-        {"expense_id": uid("exp"), "amount": 3500, "category": "decoration",
+        {"expense_id": uid("exp"), "committee_id": cid, "amount": 3500, "category": "decoration",
          "vendor": "Marigold Mart", "description": "Flowers", "approved": True,
          "created_at": now, "created_by": "System"},
-        {"expense_id": uid("exp"), "amount": 2200, "category": "food",
+        {"expense_id": uid("exp"), "committee_id": cid, "amount": 2200, "category": "food",
          "vendor": "Sri Krishna Catering", "description": "Annadanam supplies",
          "approved": False, "created_at": now, "created_by": "System"},
     ]
     await db.expenses.insert_many(expenses)
 
     tasks = [
-        {"task_id": uid("task"), "title": "Book pandal decorator",
+        {"task_id": uid("task"), "committee_id": cid, "title": "Book pandal decorator",
          "description": "Confirm the marigold and rangoli team", "priority": "high",
          "status": "doing", "due_at": (now + timedelta(days=2)).isoformat(),
          "assignee_id": user["user_id"], "assignee_name": user["name"],
          "created_at": now, "created_by": user["user_id"], "created_by_name": user["name"],
          "comments": [], "history": []},
-        {"task_id": uid("task"), "title": "Arrange sound system",
+        {"task_id": uid("task"), "committee_id": cid, "title": "Arrange sound system",
          "description": "Coordinate with cultural coordinator", "priority": "medium",
          "status": "todo", "due_at": (now + timedelta(days=4)).isoformat(),
          "assignee_id": user["user_id"], "assignee_name": user["name"],
          "created_at": now, "created_by": user["user_id"], "created_by_name": user["name"],
          "comments": [], "history": []},
-        {"task_id": uid("task"), "title": "Print prasadam labels",
+        {"task_id": uid("task"), "committee_id": cid, "title": "Print prasadam labels",
          "description": "500 stickers for laddoos", "priority": "low",
          "status": "done", "due_at": (now - timedelta(days=1)).isoformat(),
          "assignee_id": user["user_id"], "assignee_name": user["name"],
@@ -826,15 +916,15 @@ async def seed(user: dict = Depends(require_role("President"))):
     await db.tasks.insert_many(tasks)
 
     events = [
-        {"event_id": uid("evt"), "title": "Ganesha Sthapana (Pran Pratishtha)",
+        {"event_id": uid("evt"), "committee_id": cid, "title": "Ganesha Sthapana (Pran Pratishtha)",
          "description": "Main installation ceremony", "starts_at": (now + timedelta(days=1)).isoformat(),
          "location": "Community Pandal", "category": "pooja",
          "created_at": now, "created_by": "System"},
-        {"event_id": uid("evt"), "title": "Cultural Evening",
+        {"event_id": uid("evt"), "committee_id": cid, "title": "Cultural Evening",
          "description": "Dance and singing performances", "starts_at": (now + timedelta(days=3)).isoformat(),
          "location": "Main Stage", "category": "cultural",
          "created_at": now, "created_by": "System"},
-        {"event_id": uid("evt"), "title": "Annadanam",
+        {"event_id": uid("evt"), "committee_id": cid, "title": "Annadanam",
          "description": "Community feast", "starts_at": (now + timedelta(days=5)).isoformat(),
          "location": "Community Hall", "category": "annadanam",
          "created_at": now, "created_by": "System"},
@@ -842,10 +932,10 @@ async def seed(user: dict = Depends(require_role("President"))):
     await db.events.insert_many(events)
 
     announcements = [
-        {"announcement_id": uid("ann"), "title": "Welcome to Vinayaka Seva",
+        {"announcement_id": uid("ann"), "committee_id": cid, "title": "Welcome to Vinayaka Seva",
          "body": "Ganpati Bappa Morya! Our committee app is ready. Please add your donations and tasks.",
          "pinned": True, "created_at": now, "author": user["name"], "author_role": user["role"]},
-        {"announcement_id": uid("ann"), "title": "Volunteers needed for Aarti",
+        {"announcement_id": uid("ann"), "committee_id": cid, "title": "Volunteers needed for Aarti",
          "body": "We need 5 volunteers for the evening aarti on Day 2. Please sign up.",
          "pinned": False, "created_at": now, "author": user["name"], "author_role": user["role"]},
     ]
@@ -907,14 +997,15 @@ class GalleryIn(BaseModel):
     category: str = "general"  # aarti, decoration, cultural, annadanam, general
 
 @api.get("/gallery")
-async def gallery_list(user: dict = Depends(get_current_user)):
-    items = await db.gallery.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+async def gallery_list(user: dict = Depends(get_user_with_committee)):
+    items = await db.gallery.find(cscope(user), {"_id": 0}).sort("created_at", -1).to_list(500)
     return [clean(x) for x in items]
 
 @api.post("/gallery")
-async def gallery_add(body: GalleryIn, user: dict = Depends(get_current_user)):
+async def gallery_add(body: GalleryIn, user: dict = Depends(get_user_with_committee)):
     doc = body.dict()
     doc["photo_id"] = uid("ph")
+    doc["committee_id"] = user["committee_id"]
     doc["created_at"] = now_utc()
     doc["by_id"] = user["user_id"]
     doc["by_name"] = user["name"]
@@ -922,14 +1013,13 @@ async def gallery_add(body: GalleryIn, user: dict = Depends(get_current_user)):
     return clean({**doc})
 
 @api.delete("/gallery/{photo_id}")
-async def gallery_delete(photo_id: str, user: dict = Depends(get_current_user)):
-    doc = await db.gallery.find_one({"photo_id": photo_id}, {"_id": 0})
+async def gallery_delete(photo_id: str, user: dict = Depends(get_user_with_committee)):
+    doc = await db.gallery.find_one({"photo_id": photo_id, **cscope(user)}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "not_found")
     if doc.get("by_id") != user["user_id"] and user.get("role") not in ("President", "Vice President", "Secretary"):
         raise HTTPException(403, "not_your_photo")
-    await db.gallery.update_one({"photo_id": photo_id}, {"$set": {"deleted_at": now_utc()}})
-    await db.gallery.delete_one({"photo_id": photo_id})
+    await db.gallery.delete_one({"photo_id": photo_id, **cscope(user)})
     return {"ok": True}
 
 # ---------- Polls / Committee Decisions ----------
@@ -943,8 +1033,8 @@ class PollVote(BaseModel):
     option_index: int
 
 @api.get("/polls")
-async def polls_list(user: dict = Depends(get_current_user)):
-    items = await db.polls.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
+async def polls_list(user: dict = Depends(get_user_with_committee)):
+    items = await db.polls.find(cscope(user), {"_id": 0}).sort("created_at", -1).to_list(200)
     out = []
     for p in items:
         p = clean(p) or {}
@@ -966,11 +1056,12 @@ async def polls_list(user: dict = Depends(get_current_user)):
     return out
 
 @api.post("/polls")
-async def polls_create(body: PollIn, user: dict = Depends(get_current_user)):
+async def polls_create(body: PollIn, user: dict = Depends(get_user_with_committee)):
     if len(body.options) < 2:
         raise HTTPException(400, "min_two_options")
     doc = {
         "poll_id": uid("poll"),
+        "committee_id": user["committee_id"],
         "question": body.question,
         "options": body.options,
         "anonymous": body.anonymous,
@@ -986,18 +1077,17 @@ async def polls_create(body: PollIn, user: dict = Depends(get_current_user)):
     return clean({**doc, "counts": [0] * len(body.options), "total_votes": 0, "my_vote": None, "voters": []})
 
 @api.post("/polls/{poll_id}/vote")
-async def polls_vote(poll_id: str, body: PollVote, user: dict = Depends(get_current_user)):
-    poll = await db.polls.find_one({"poll_id": poll_id}, {"_id": 0})
+async def polls_vote(poll_id: str, body: PollVote, user: dict = Depends(get_user_with_committee)):
+    poll = await db.polls.find_one({"poll_id": poll_id, **cscope(user)}, {"_id": 0})
     if not poll:
         raise HTTPException(404, "poll_not_found")
     if poll.get("status") != "open":
         raise HTTPException(400, "poll_closed")
     if body.option_index < 0 or body.option_index >= len(poll.get("options", [])):
         raise HTTPException(400, "bad_option")
-    # one vote per user (upsert-style)
-    await db.polls.update_one({"poll_id": poll_id},
+    await db.polls.update_one({"poll_id": poll_id, **cscope(user)},
         {"$pull": {"votes": {"user_id": user["user_id"]}}})
-    await db.polls.update_one({"poll_id": poll_id},
+    await db.polls.update_one({"poll_id": poll_id, **cscope(user)},
         {"$push": {"votes": {
             "user_id": user["user_id"],
             "user_name": user["name"],
@@ -1008,13 +1098,13 @@ async def polls_vote(poll_id: str, body: PollVote, user: dict = Depends(get_curr
     return {"ok": True}
 
 @api.post("/polls/{poll_id}/close")
-async def polls_close(poll_id: str, user: dict = Depends(get_current_user)):
-    poll = await db.polls.find_one({"poll_id": poll_id}, {"_id": 0})
+async def polls_close(poll_id: str, user: dict = Depends(get_user_with_committee)):
+    poll = await db.polls.find_one({"poll_id": poll_id, **cscope(user)}, {"_id": 0})
     if not poll:
         raise HTTPException(404, "poll_not_found")
     if poll.get("created_by_id") != user["user_id"] and user.get("role") not in ("President", "Vice President", "Secretary"):
         raise HTTPException(403, "not_allowed")
-    await db.polls.update_one({"poll_id": poll_id}, {"$set": {"status": "closed", "closed_at": now_utc()}})
+    await db.polls.update_one({"poll_id": poll_id, **cscope(user)}, {"$set": {"status": "closed", "closed_at": now_utc()}})
     return {"ok": True}
 
 # ---------- Include router ----------
@@ -1032,9 +1122,33 @@ app.add_middleware(
 async def on_start():
     await db.users.create_index("email", unique=True)
     await db.users.create_index("user_id", unique=True)
+    await db.users.create_index("committee_id")
+    await db.committees.create_index("code", unique=True)
+    await db.committees.create_index("committee_id", unique=True)
     await db.user_sessions.create_index("session_token", unique=True)
     await db.user_sessions.create_index("user_id")
     await db.user_sessions.create_index("expires_at", expireAfterSeconds=0)
+
+    # Backfill: if there are existing docs without committee_id, put them all into
+    # a single "legacy" committee so nothing gets lost after multi-tenancy is enabled.
+    legacy = await db.committees.find_one({"code": "LEGACY"}, {"_id": 0})
+    if not legacy:
+        legacy_id = uid("com")
+        await db.committees.insert_one({
+            "committee_id": legacy_id, "name": "Legacy Committee (pre-multi-tenant)",
+            "code": "LEGACY", "created_by": None, "created_at": now_utc(),
+        })
+    else:
+        legacy_id = legacy["committee_id"]
+    for coll in ("users", "donations", "expenses", "tasks", "announcements",
+                 "events", "shifts", "rsvps", "gallery", "polls"):
+        try:
+            await db[coll].update_many(
+                {"committee_id": {"$exists": False}},
+                {"$set": {"committee_id": legacy_id}},
+            )
+        except Exception as e:
+            logger.warning("backfill %s: %s", coll, e)
     try:
         _init_storage()
     except Exception as e:

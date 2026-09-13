@@ -1,7 +1,9 @@
 import React from "react";
-import { View, Text, ScrollView, Pressable, StyleSheet } from "react-native";
+import { View, Text, ScrollView, Pressable, StyleSheet, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { colors, fonts, radius, spacing } from "@/src/theme";
 import { ScreenHeader } from "@/src/ui";
@@ -25,11 +27,33 @@ export default function More() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { user, signOut } = useAuth();
+  const committee = useQuery({ queryKey: ["myCommittee"], queryFn: api.myCommittee });
+
+  const copyCode = () => {
+    const code = committee.data?.code;
+    if (!code) return;
+    if (Platform.OS === "web" && typeof navigator !== "undefined" && (navigator as any).clipboard) {
+      (navigator as any).clipboard.writeText(code);
+    }
+  };
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }} testID="more-screen">
       <ScreenHeader title="More" subtitle="Modules & tools" />
       <ScrollView contentContainerStyle={{ padding: spacing.xl, paddingBottom: insets.bottom + spacing["3xl"] }}>
+        {committee.data ? (
+          <Pressable onPress={copyCode} style={styles.committeeCard} testID="committee-card">
+            <View style={{ flex: 1 }}>
+              <Text style={styles.commLbl}>YOUR COMMITTEE</Text>
+              <Text style={styles.commName}>{committee.data.name}</Text>
+              <Text style={styles.commMeta}>{committee.data.member_count} member{committee.data.member_count === 1 ? "" : "s"} · Tap code to copy</Text>
+            </View>
+            <View style={styles.commCodeBox}>
+              <Text style={styles.commCode}>{committee.data.code}</Text>
+            </View>
+          </Pressable>
+        ) : null}
+
         <View style={styles.profile}>
           <View style={styles.avatar}><Text style={styles.avatarText}>{(user?.name || "?").slice(0, 1).toUpperCase()}</Text></View>
           <View style={{ flex: 1 }}>
@@ -72,4 +96,10 @@ const styles = StyleSheet.create({
   tileLabel: { fontSize: 12, fontFamily: fonts.text, color: colors.onSurface, textAlign: "center", fontWeight: "600" },
   signOut: { marginTop: spacing["2xl"], paddingVertical: 16, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.error, alignItems: "center" },
   signOutText: { color: colors.error, fontWeight: "700" },
+  committeeCard: { flexDirection: "row", alignItems: "center", backgroundColor: colors.brandTertiary, borderRadius: radius.lg, padding: spacing.lg, borderWidth: 1, borderColor: "rgba(230,81,0,0.2)", marginBottom: spacing.md },
+  commLbl: { color: colors.brandPrimary, fontSize: 10, letterSpacing: 1, fontWeight: "800" },
+  commName: { fontFamily: fonts.display, fontSize: 18, fontWeight: "600", color: colors.onSurface, marginTop: 4 },
+  commMeta: { color: colors.onSurfaceTertiary, fontSize: 12, marginTop: 2 },
+  commCodeBox: { backgroundColor: colors.brandPrimary, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: radius.md, minWidth: 90, alignItems: "center" },
+  commCode: { color: colors.onBrand, fontFamily: fonts.display, fontSize: 20, fontWeight: "700", letterSpacing: 3 },
 });
