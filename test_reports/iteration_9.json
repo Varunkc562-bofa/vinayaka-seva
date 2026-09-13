@@ -1,0 +1,44 @@
+{
+  "summary": "Backend verification of the two new DELETE endpoints (donations & expenses) - ALL 9 acceptance criteria PASS. Added /app/backend/tests/test_delete_donations_expenses.py with 8 new tests covering: DELETE donation by any auth user (Regular Member OK), DELETE donation missing→404, DELETE donation without Bearer→401, dashboard+pending-dues fully recomputed on donation delete (total_donations, pending_dues_total, pending_dues_count, balance all restored to baseline), same 3 cases for expenses, and dashboard total_expenses+balance restored on expense delete. New tests: 8/8 PASS in serial mode. Full regression: 87-88/88 PASS depending on run — one PRE-EXISTING flake in TestExpenses::test_approve_as_president unrelated to the DELETE work (seed-test races with expense-approve test under xdist loadscope; also reproduces with my new file completely removed, confirmed by 3 back-to-back runs, 2 of which passed 88/88 and 1 failed only on the pre-existing test). No 500s, no auth bypass, no missing 404, no cascade regressions. Delete endpoints correctly return {ok: true, deleted: 1} and remove the row from Mongo, list endpoints, dashboard aggregations and pending-dues in real time.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/dev/seed vs GET /api/expenses (race)", "issue": "Pre-existing flake in test_vinayaka_backend.py::TestExpenses::test_approve_as_president. The TestSeed class calls POST /api/dev/seed which does db.expenses.delete_many({}), and under xdist loadscope it can run on the other worker after TestExpenses.test_create_expense has inserted its expense, wiping it before test_approve_as_president reads it back. Reproduces with my new test file removed. Not a product bug — test-suite isolation issue. Recommend either (a) seeded routes should not delete_many test data (e.g. delete only records with created_by='System'), or (b) TestSeed should be moved into the same loadscope group by making it a member of TestExpenses, or (c) tests should tag their own rows and filter by that tag when asserting."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_delete_donations_expenses.py",
+    "/app/test_reports/pytest/pytest_iter9_full.xml",
+    "/app/test_reports/pytest/pytest_delete_results.xml"
+  ],
+  "action_items": [
+    "Optional (not blocking DELETE work): harden test_vinayaka_backend.py::TestSeed vs TestExpenses race — either narrow /api/dev/seed's delete filter, or scope TestSeed into TestExpenses' loadscope class."
+  ],
+  "critical_code_review_comments": [
+    "DELETE /api/donations/{id} (server.py:468-474) correctly returns 404 for missing donation BEFORE calling delete_one, then reports {ok, deleted}. Correct.",
+    "DELETE /api/expenses/{id} (server.py:558-564) mirrors donations. Correct.",
+    "Auth: both DELETE endpoints use Depends(get_current_user), so any authenticated user (Regular Member included) can delete — matches the MVP intent stated in the review_request. No RBAC gating (by design).",
+    "Dashboard aggregation (server.py:659-670) reads donations fresh each request, so total_donations drops by the deleted donation's paid_amount, pending_dues_total drops by (amount − paid_amount), and pending_dues_count drops by 1 when the deleted donation had remaining>0.01. Verified end-to-end.",
+    "pending-dues (server.py:476-486) filters remaining>0.01 at read time, so deleted donations are correctly excluded (no cache).",
+    "Nit: the two DELETE handlers duplicate the 'find→404-or-delete' pattern. Could DRY into a helper but current code is only 4 lines each — acceptable.",
+    "Cascade: expense delete does NOT touch approvals on other rows; donation delete does NOT touch anything else (no sms_logs cleanup — sms_logs remain, which is correct for audit purposes)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_delete_donations_expenses.py (new)"
+  ],
+  "success_rate": {
+    "backend": "88/88 (best run) / 87/88 (worst run, 1 pre-existing flake unrelated to DELETE) — new DELETE tests 8/8 always",
+    "frontend": "not tested (backend-only request)"
+  },
+  "seed_data_creation": "Uses existing conftest.py fixtures: president/regular_member/second_member are created fresh per session (TEST_ email prefix) and torn down. No leftover state beyond the pre-existing 2 expenses / 7 donations already in the DB from prior iterations.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "1) /app/backend/pytest.ini forces -n 2 --dist loadscope. To run serially use `-n 0` (NOT `-p no:xdist` which errors). 2) The TestSeed vs TestExpenses race in test_vinayaka_backend.py is intermittent and pre-existing — see minor issue above. 3) Auth in tests uses conftest _make_user helper which inserts user + user_sessions row directly in Mongo with session_token field. 4) DELETE endpoints require Bearer token (401 without); no role gating (any authenticated user). 5) After DELETE, both /api/dashboard and /api/pending-dues recompute live from Mongo — no cache invalidation code needed on backend.",
+  "rca_of_issue": "Not applicable — no product bug. New DELETE endpoints work as specified. Pre-existing test flake RCA: db.expenses.delete_many({}) inside POST /api/dev/seed can wipe expenses created by a parallel test class before that class's follow-up assertion runs. Mitigation options listed in minor issue."
+}

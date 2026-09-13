@@ -29,7 +29,7 @@ export default function Expenses() {
   const total = useMemo(() => data.reduce((s: number, e: any) => s + (e.amount || 0), 0), [data]);
   const canApprove = ["President", "Treasurer", "Vice President"].includes(user?.role || "");
 
-  const resetForm = () => { setEditing(null); setAmt(""); setVendor(""); setDesc(""); setBillPath(null); setCat("decoration"); };
+  const resetForm = () => { setEditing(null); setAmt(""); setVendor(""); setDesc(""); setBillPath(null); setCat("decoration"); setConfirmDel(false); };
   const openNew = () => { resetForm(); setShow(true); };
   const openEdit = (e: any) => {
     setEditing(e); setAmt(String(e.amount || "")); setCat(e.category || "decoration");
@@ -45,6 +45,11 @@ export default function Expenses() {
     mutationFn: ({ id, d }: any) => api.editExpense(id, d),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["expenses"] }); qc.invalidateQueries({ queryKey: ["dashboard"] }); setShow(false); resetForm(); },
   });
+  const deleteM = useMutation({
+    mutationFn: (id: string) => api.deleteExpense(id),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["expenses"] }); qc.invalidateQueries({ queryKey: ["dashboard"] }); setShow(false); resetForm(); setConfirmDel(false); },
+  });
+  const [confirmDel, setConfirmDel] = useState(false);
   const approveM = useMutation({
     mutationFn: (id: string) => api.approveExpense(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["expenses"] }),
@@ -127,6 +132,20 @@ export default function Expenses() {
         </Pressable>
         <Button label={(createM.isPending || editM.isPending) ? "Saving…" : (editing ? "Save changes" : "Save expense")} disabled={createM.isPending || editM.isPending || !amt}
           onPress={save} testID="save-expense-button" />
+        {editing ? (
+          <Pressable
+            onPress={() => {
+              if (!confirmDel) setConfirmDel(true);
+              else deleteM.mutate(editing.expense_id);
+            }}
+            style={[styles.deleteBtn, confirmDel && styles.deleteBtnConfirm]}
+            testID="delete-expense-button"
+          >
+            <Text style={[styles.deleteBtnText, confirmDel && { color: colors.onError }]}>
+              {deleteM.isPending ? "Deleting…" : confirmDel ? "Tap again to confirm delete" : "🗑  Delete this expense"}
+            </Text>
+          </Pressable>
+        ) : null}
       </BottomSheet>
     </View>
   );
@@ -149,4 +168,7 @@ const styles = StyleSheet.create({
   approveBtn: { marginTop: spacing.md, alignSelf: "flex-start", paddingHorizontal: spacing.lg, paddingVertical: 8, borderRadius: radius.pill, backgroundColor: colors.success },
   approveTxt: { color: colors.onSuccess, fontWeight: "700", fontSize: 12, textTransform: "uppercase", letterSpacing: 0.5 },
   attach: { paddingVertical: 12, paddingHorizontal: spacing.lg, borderRadius: radius.md, borderWidth: 1, borderColor: colors.brandPrimary, borderStyle: "dashed", alignItems: "center", marginBottom: spacing.md },
+  deleteBtn: { marginTop: spacing.md, paddingVertical: 14, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.error, alignItems: "center" },
+  deleteBtnConfirm: { backgroundColor: colors.error, borderColor: colors.error },
+  deleteBtnText: { color: colors.error, fontWeight: "700", fontSize: 14 },
 });

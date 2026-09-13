@@ -465,6 +465,14 @@ async def edit_donation(donation_id: str, body: DonationEdit, user: dict = Depen
     await db.donations.update_one({"donation_id": donation_id}, {"$set": update})
     return clean(await db.donations.find_one({"donation_id": donation_id}, {"_id": 0}))
 
+@api.delete("/donations/{donation_id}")
+async def delete_donation(donation_id: str, user: dict = Depends(get_current_user)):
+    cur = await db.donations.find_one({"donation_id": donation_id}, {"_id": 0})
+    if not cur:
+        raise HTTPException(404, "not_found")
+    result = await db.donations.delete_one({"donation_id": donation_id})
+    return {"ok": True, "deleted": result.deleted_count}
+
 @api.get("/pending-dues")
 async def pending_dues(user: dict = Depends(get_current_user)):
     items = await db.donations.find({}, {"_id": 0}).sort("created_at", -1).to_list(1000)
@@ -546,6 +554,14 @@ async def edit_expense(expense_id: str, body: ExpenseEdit, user: dict = Depends(
     update["updated_at"] = now_utc()
     await db.expenses.update_one({"expense_id": expense_id}, {"$set": update})
     return clean(await db.expenses.find_one({"expense_id": expense_id}, {"_id": 0}))
+
+@api.delete("/expenses/{expense_id}")
+async def delete_expense(expense_id: str, user: dict = Depends(get_current_user)):
+    cur = await db.expenses.find_one({"expense_id": expense_id}, {"_id": 0})
+    if not cur:
+        raise HTTPException(404, "not_found")
+    result = await db.expenses.delete_one({"expense_id": expense_id})
+    return {"ok": True, "deleted": result.deleted_count}
 
 # ---------- Announcements ----------
 @api.get("/announcements")

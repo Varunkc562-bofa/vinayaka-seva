@@ -41,7 +41,7 @@ export default function Donations() {
 
   const openNew = () => {
     setEditing(null); setDonor(""); setAmount(""); setPaid(""); setIsPartial(false);
-    setMode("cash"); setNote(""); setPhone(""); setSendSms(true);
+    setMode("cash"); setNote(""); setPhone(""); setSendSms(true); setConfirmDel(false);
     setShow(true);
   };
   const openEdit = (d: any) => {
@@ -54,7 +54,7 @@ export default function Donations() {
     setMode(d.mode || "cash");
     setNote(d.note || "");
     setPhone(d.phone || "");
-    setSendSms(false);
+    setSendSms(false); setConfirmDel(false);
     setShow(true);
   };
 
@@ -75,6 +75,11 @@ export default function Donations() {
     mutationFn: ({ id, d }: any) => api.editDonation(id, d),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["donations"] }); qc.invalidateQueries({ queryKey: ["dashboard"] }); qc.invalidateQueries({ queryKey: ["pendingDues"] }); setShow(false); },
   });
+  const deleteM = useMutation({
+    mutationFn: (id: string) => api.deleteDonation(id),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["donations"] }); qc.invalidateQueries({ queryKey: ["dashboard"] }); qc.invalidateQueries({ queryKey: ["pendingDues"] }); setShow(false); setConfirmDel(false); },
+  });
+  const [confirmDel, setConfirmDel] = useState(false);
 
   const save = () => {
     const amountVal = parseFloat(amount) || 0;
@@ -172,6 +177,20 @@ export default function Donations() {
           </Pressable>
         ) : null}
         <Button label={(createM.isPending || editM.isPending) ? "Saving…" : (editing ? "Save changes" : "Save donation")} disabled={disabled} onPress={save} testID="save-donation-button" />
+        {editing ? (
+          <Pressable
+            onPress={() => {
+              if (!confirmDel) setConfirmDel(true);
+              else deleteM.mutate(editing.donation_id);
+            }}
+            style={[styles.deleteBtn, confirmDel && styles.deleteBtnConfirm]}
+            testID="delete-donation-button"
+          >
+            <Text style={[styles.deleteBtnText, confirmDel && { color: colors.onError }]}>
+              {deleteM.isPending ? "Deleting…" : confirmDel ? "Tap again to confirm delete" : "🗑  Delete this donation"}
+            </Text>
+          </Pressable>
+        ) : null}
       </BottomSheet>
     </View>
   );
@@ -200,4 +219,7 @@ const styles = StyleSheet.create({
   dueBannerText: { color: colors.warning, fontSize: 12, fontWeight: "700" },
   partialToggle: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: spacing.md },
   checkbox: { width: 22, height: 22, borderRadius: 6, borderWidth: 2, borderColor: colors.borderStrong, alignItems: "center", justifyContent: "center" },
+  deleteBtn: { marginTop: spacing.md, paddingVertical: 14, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.error, alignItems: "center" },
+  deleteBtnConfirm: { backgroundColor: colors.error, borderColor: colors.error },
+  deleteBtnText: { color: colors.error, fontWeight: "700", fontSize: 14 },
 });

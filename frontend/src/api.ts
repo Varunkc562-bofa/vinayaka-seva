@@ -78,11 +78,13 @@ export const api = {
   donations: () => request("/donations"),
   createDonation: (d: any) => request("/donations", { method: "POST", body: JSON.stringify(d) }),
   editDonation: (id: string, d: any) => request(`/donations/${id}`, { method: "PATCH", body: JSON.stringify(d) }),
+  deleteDonation: (id: string) => request(`/donations/${id}`, { method: "DELETE" }),
   pendingDues: () => request("/pending-dues"),
 
   expenses: () => request("/expenses"),
   createExpense: (e: any) => request("/expenses", { method: "POST", body: JSON.stringify(e) }),
   editExpense: (id: string, e: any) => request(`/expenses/${id}`, { method: "PATCH", body: JSON.stringify(e) }),
+  deleteExpense: (id: string) => request(`/expenses/${id}`, { method: "DELETE" }),
   approveExpense: (id: string) => request(`/expenses/${id}/approve`, { method: "PATCH" }),
 
   announcements: () => request("/announcements"),
