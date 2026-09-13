@@ -14,6 +14,7 @@ export default function Donations() {
   const [show, setShow] = useState(false);
   const [donor, setDonor] = useState(""); const [amount, setAmount] = useState("");
   const [mode, setMode] = useState("cash"); const [note, setNote] = useState("");
+  const [phone, setPhone] = useState(""); const [sendSms, setSendSms] = useState(true);
 
   const { data: donations = [], isLoading, refetch, isRefetching } = useQuery({
     queryKey: ["donations"], queryFn: api.donations,
@@ -21,7 +22,7 @@ export default function Donations() {
   const total = useMemo(() => donations.reduce((s: number, d: any) => s + (d.amount || 0), 0), [donations]);
   const createM = useMutation({
     mutationFn: (d: any) => api.createDonation(d),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["donations"] }); qc.invalidateQueries({ queryKey: ["dashboard"] }); setShow(false); setDonor(""); setAmount(""); setNote(""); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["donations"] }); qc.invalidateQueries({ queryKey: ["dashboard"] }); setShow(false); setDonor(""); setAmount(""); setNote(""); setPhone(""); },
   });
 
   return (
@@ -62,8 +63,15 @@ export default function Donations() {
           ))}
         </View>
         <Field label="Note (optional)" value={note} onChangeText={setNote} placeholder="Family donation" />
+        <Field label="Donor phone (for SMS receipt)" value={phone} onChangeText={setPhone} keyboardType="phone-pad" placeholder="+919876543210" autoCapitalize="none" />
+        <Pressable onPress={() => setSendSms(!sendSms)} style={{ flexDirection: "row", alignItems: "center", gap: 10, marginBottom: spacing.lg }} testID="send-sms-toggle">
+          <View style={{ width: 22, height: 22, borderRadius: 6, borderWidth: 2, borderColor: sendSms ? colors.brandPrimary : colors.borderStrong, backgroundColor: sendSms ? colors.brandPrimary : "transparent", alignItems: "center", justifyContent: "center" }}>
+            {sendSms ? <Text style={{ color: colors.onBrand, fontWeight: "800" }}>✓</Text> : null}
+          </View>
+          <Text style={{ color: colors.onSurface, fontWeight: "600", fontSize: 14 }}>Send SMS thank-you to donor</Text>
+        </Pressable>
         <Button label={createM.isPending ? "Saving…" : "Save donation"} disabled={createM.isPending || !donor.trim() || !amount}
-          onPress={() => createM.mutate({ donor_name: donor.trim(), amount: parseFloat(amount) || 0, mode, note })} testID="save-donation-button" />
+          onPress={() => createM.mutate({ donor_name: donor.trim(), amount: parseFloat(amount) || 0, mode, note, phone: phone.trim() || null, send_sms: sendSms })} testID="save-donation-button" />
       </BottomSheet>
     </View>
   );

@@ -104,6 +104,17 @@ export const api = {
     method: "POST", body: JSON.stringify({ option_index }),
   }),
   closePoll: (id: string) => request(`/polls/${id}/close`, { method: "POST" }),
+
+  // SMS config
+  getSmsConfig: () => request("/config/sms"),
+  setSmsConfig: (d: any) => request("/config/sms", { method: "PUT", body: JSON.stringify(d) }),
+  testSms: (phone: string) => request("/config/sms/test", { method: "POST", body: JSON.stringify({ phone }) }),
+
+  // RSVP
+  rsvpSummary: () => request("/rsvp/summary"),
+  rsvp: (event_id: string, status: string, plus_ones = 0) => request(`/events/${event_id}/rsvp`, {
+    method: "POST", body: JSON.stringify({ status, plus_ones }),
+  }),
 };
 
 // Multipart file upload — returns { storage_path, url, size }

@@ -131,6 +131,22 @@ class DonationIn(BaseModel):
     mode: str = "cash"  # cash, upi, bank
     note: Optional[str] = ""
     phone: Optional[str] = None
+    send_sms: bool = True
+
+class SmsConfigIn(BaseModel):
+    enabled: bool = False
+    provider: str = "twilio"  # twilio | msg91
+    committee_name: str = "Hanuman youth"
+    template: str = "🙏 Namaste {donor}! {committee} received your kind contribution of ₹{amount}. Ganpati Bappa Morya!"
+    twilio_sid: Optional[str] = None
+    twilio_token: Optional[str] = None
+    twilio_from: Optional[str] = None
+    msg91_authkey: Optional[str] = None
+    msg91_sender: Optional[str] = None
+
+class RsvpIn(BaseModel):
+    status: str = "yes"  # yes | maybe | no
+    plus_ones: int = 0
 
 class ExpenseIn(BaseModel):
     amount: float
@@ -334,6 +350,64 @@ async def delete_task(task_id: str, user: dict = Depends(get_current_user)):
     return {"ok": True}
 
 # ---------- Donations ----------
+def _send_sms_background(donation: dict):
+    """Non-blocking SMS send. Reads live config from Mongo."""
+    from pymongo import MongoClient
+    try:
+        pc = MongoClient(mongo_url)
+        pdb = pc[os.environ["DB_NAME"]]
+        cfg = pdb.config.find_one({"key": "sms"}) or {}
+        pc.close()
+    except Exception as e:
+        logger.warning("sms cfg read failed: %s", e)
+        return
+    if not cfg.get("enabled"):
+        return
+    phone = donation.get("phone")
+    if not phone or len(phone.strip()) < 6:
+        return
+    tmpl = cfg.get("template") or "Thank you {donor} for ₹{amount}"
+    body = tmpl.format(donor=donation.get("donor_name", "Sevak"),
+                       amount=int(donation.get("amount", 0)),
+                       committee=cfg.get("committee_name", "Committee"))
+    provider = cfg.get("provider", "twilio")
+    log = {"donation_id": donation.get("donation_id"), "phone": phone, "at": now_utc(),
+           "provider": provider, "body": body}
+    try:
+        if provider == "twilio":
+            sid, token, sender = cfg.get("twilio_sid"), cfg.get("twilio_token"), cfg.get("twilio_from")
+            if not (sid and token and sender):
+                log["status"] = "skipped"; log["reason"] = "twilio_not_configured"
+            else:
+                r = requests.post(f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json",
+                    auth=(sid, token),
+                    data={"From": sender, "To": phone, "Body": body}, timeout=15)
+                log["status"] = "sent" if r.ok else "failed"
+                log["provider_status"] = r.status_code
+                log["response"] = r.text[:400]
+        elif provider == "msg91":
+            key, sender = cfg.get("msg91_authkey"), cfg.get("msg91_sender") or "TXTLCL"
+            if not key:
+                log["status"] = "skipped"; log["reason"] = "msg91_not_configured"
+            else:
+                r = requests.post("https://api.msg91.com/api/v5/flow/",
+                    headers={"authkey": key, "content-type": "application/json"},
+                    json={"sender": sender, "route": "4", "country": "91",
+                          "sms": [{"message": body, "to": [phone.lstrip("+").lstrip("91")]}]},
+                    timeout=15)
+                log["status"] = "sent" if r.ok else "failed"
+                log["provider_status"] = r.status_code
+                log["response"] = r.text[:400]
+        else:
+            log["status"] = "skipped"; log["reason"] = "unknown_provider"
+    except Exception as e:
+        log["status"] = "error"; log["error"] = str(e)[:400]
+    try:
+        pc = MongoClient(mongo_url); pdb = pc[os.environ["DB_NAME"]]
+        pdb.sms_logs.insert_one(log); pc.close()
+    except Exception:
+        pass
+
 @api.get("/donations")
 async def list_donations(user: dict = Depends(get_current_user)):
     items = await db.donations.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
@@ -341,12 +415,54 @@ async def list_donations(user: dict = Depends(get_current_user)):
 
 @api.post("/donations")
 async def create_donation(body: DonationIn, user: dict = Depends(get_current_user)):
+    from fastapi import BackgroundTasks
     d = body.dict()
+    send_sms = d.pop("send_sms", True)
     d["donation_id"] = uid("don")
     d["created_at"] = now_utc()
     d["created_by"] = user["name"]
     await db.donations.insert_one(d)
-    return clean({**d})
+    resp = clean({**d})
+    if send_sms and d.get("phone"):
+        # Fire-and-forget; using threadpool via run_in_threadpool for the blocking requests call
+        import asyncio
+        asyncio.get_event_loop().run_in_executor(None, _send_sms_background, {**d, "created_at": d["created_at"].isoformat()})
+    return resp
+
+# ---------- SMS Config ----------
+@api.get("/config/sms")
+async def get_sms_config(user: dict = Depends(require_role("President", "Treasurer", "Secretary"))):
+    cfg = await db.config.find_one({"key": "sms"}, {"_id": 0}) or {}
+    # Hide sensitive tokens in read
+    if cfg.get("twilio_token"):
+        cfg["twilio_token_set"] = True; cfg.pop("twilio_token", None)
+    if cfg.get("msg91_authkey"):
+        cfg["msg91_authkey_set"] = True; cfg.pop("msg91_authkey", None)
+    return clean(cfg)
+
+@api.put("/config/sms")
+async def set_sms_config(body: SmsConfigIn,
+        user: dict = Depends(require_role("President", "Treasurer", "Secretary"))):
+    doc = body.dict()
+    # If sensitive fields sent empty, don't overwrite existing
+    current = await db.config.find_one({"key": "sms"}, {"_id": 0}) or {}
+    for k in ("twilio_token", "twilio_sid", "twilio_from", "msg91_authkey", "msg91_sender"):
+        if not doc.get(k) and current.get(k):
+            doc[k] = current[k]
+    doc["key"] = "sms"; doc["updated_at"] = now_utc()
+    await db.config.update_one({"key": "sms"}, {"$set": doc}, upsert=True)
+    return {"ok": True}
+
+@api.post("/config/sms/test")
+async def test_sms(payload: Dict[str, Any],
+        user: dict = Depends(require_role("President", "Treasurer", "Secretary"))):
+    phone = payload.get("phone")
+    if not phone:
+        raise HTTPException(400, "phone_required")
+    fake = {"donation_id": "test", "donor_name": user["name"], "amount": 100, "phone": phone}
+    await run_in_threadpool(_send_sms_background, fake)
+    last = await db.sms_logs.find_one({"donation_id": "test", "phone": phone}, {"_id": 0}, sort=[("at", -1)])
+    return clean(last) or {"status": "unknown"}
 
 # ---------- Expenses ----------
 @api.get("/expenses")
@@ -401,6 +517,44 @@ async def create_event(body: EventIn, user: dict = Depends(get_current_user)):
     e["created_by"] = user["name"]
     await db.events.insert_one(e)
     return clean({**e})
+
+# ---------- Event RSVPs (Prasadam Roster) ----------
+@api.get("/events/{event_id}/rsvps")
+async def list_rsvps(event_id: str, user: dict = Depends(get_current_user)):
+    items = await db.rsvps.find({"event_id": event_id}, {"_id": 0}).to_list(500)
+    return [clean(r) for r in items]
+
+@api.post("/events/{event_id}/rsvp")
+async def upsert_rsvp(event_id: str, body: RsvpIn, user: dict = Depends(get_current_user)):
+    if body.status not in ("yes", "maybe", "no"):
+        raise HTTPException(400, "bad_status")
+    doc = {
+        "event_id": event_id, "user_id": user["user_id"], "user_name": user["name"],
+        "user_role": user["role"], "status": body.status,
+        "plus_ones": max(0, int(body.plus_ones or 0)), "at": now_utc(),
+    }
+    await db.rsvps.update_one(
+        {"event_id": event_id, "user_id": user["user_id"]},
+        {"$set": doc}, upsert=True,
+    )
+    return {"ok": True}
+
+@api.get("/rsvp/summary")
+async def rsvp_summary(user: dict = Depends(get_current_user)):
+    """For each upcoming event, return yes/maybe/no counts + total headcount (yes + plus_ones)."""
+    events = await db.events.find({}, {"_id": 0}).sort("starts_at", 1).to_list(200)
+    out = []
+    for e in events:
+        rsvps = await db.rsvps.find({"event_id": e["event_id"]}, {"_id": 0}).to_list(500)
+        yes = [r for r in rsvps if r.get("status") == "yes"]
+        maybe = [r for r in rsvps if r.get("status") == "maybe"]
+        no = [r for r in rsvps if r.get("status") == "no"]
+        headcount = sum(1 + int(r.get("plus_ones") or 0) for r in yes)
+        out.append({**clean(e), "yes": len(yes), "maybe": len(maybe), "no": len(no),
+                    "headcount": headcount, "yes_list": [
+                        {"user_name": r.get("user_name"), "user_role": r.get("user_role"),
+                         "plus_ones": r.get("plus_ones", 0)} for r in yes]})
+    return out
 
 # ---------- Volunteer shifts ----------
 @api.get("/shifts")

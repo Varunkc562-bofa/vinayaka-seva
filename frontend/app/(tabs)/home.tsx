@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { View, Text, ScrollView, Pressable, StyleSheet, RefreshControl, ActivityIndicator } from "react-native";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
@@ -35,7 +35,31 @@ export default function Home() {
   const { data, isLoading, refetch, isRefetching } = useQuery({
     queryKey: ["dashboard"], queryFn: api.dashboard,
   });
+  const events = useQuery({ queryKey: ["events"], queryFn: api.events });
   const cd = useCountdown(data?.festival_start);
+
+  // Nearest upcoming pooja/annadanam within 30 min for Aarti Reminder
+  const [nowTs, setNowTs] = useState(Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNowTs(Date.now()), 30_000);
+    return () => clearInterval(t);
+  }, []);
+  const aarti = useMemo(() => {
+    const list = (events.data || []).filter((e: any) =>
+      ["pooja", "annadanam"].includes(e.category));
+    let best: any = null;
+    let bestDelta = Infinity;
+    for (const e of list) {
+      const t = new Date(e.starts_at).getTime();
+      const delta = t - nowTs;
+      if (delta > -600_000 && delta < 30 * 60_000 && delta < bestDelta) {
+        best = e; bestDelta = delta;
+      }
+    }
+    if (!best) return null;
+    const remainMs = new Date(best.starts_at).getTime() - nowTs;
+    return { event: best, remainMs };
+  }, [events.data, nowTs]);
 
   const roleView = user?.role || "Member";
 
@@ -87,6 +111,31 @@ export default function Home() {
 
       {/* Stats grid */}
       <View style={{ padding: spacing.xl }}>
+        {/* Aarti Reminder */}
+        {aarti ? (
+          <Pressable onPress={() => router.push("/module/prasadam")} style={styles.aartiCard} testID="aarti-reminder">
+            <View style={styles.aartiLeft}>
+              <Text style={styles.aartiTag}>🪔 UPCOMING SEVA</Text>
+              <Text style={styles.aartiTitle}>{aarti.event.title}</Text>
+              <Text style={styles.aartiMeta}>{aarti.event.location || "Community Pandal"} · {aarti.event.category}</Text>
+            </View>
+            <View style={styles.aartiTimer}>
+              <Text style={styles.aartiTimerBig}>
+                {aarti.remainMs > 0
+                  ? `${Math.floor(aarti.remainMs / 60000)}m`
+                  : "NOW"}
+              </Text>
+              <Text style={styles.aartiTimerLbl}>{aarti.remainMs > 0 ? "to go" : "starting"}</Text>
+            </View>
+          </Pressable>
+        ) : null}
+
+        {/* Live indicator */}
+        <View style={styles.liveRow}>
+          <View style={styles.liveDot} />
+          <Text style={styles.liveText}>LIVE · everyone sees the same data</Text>
+        </View>
+
         {isLoading ? <ActivityIndicator color={colors.brandPrimary} /> : (
           <>
             <View style={styles.grid}>
@@ -242,4 +291,15 @@ const styles = StyleSheet.create({
   annTitle: { fontFamily: fonts.display, fontSize: 17, color: colors.onSurface, fontWeight: "600" },
   annBody: { color: colors.onSurfaceTertiary, fontSize: 14, marginTop: 4, lineHeight: 20 },
   annMeta: { color: colors.muted, fontSize: 11, marginTop: 6, letterSpacing: 0.5 },
+  aartiCard: { flexDirection: "row", alignItems: "center", backgroundColor: colors.brandTertiary, borderRadius: radius.lg, padding: spacing.lg, borderWidth: 1, borderColor: "rgba(230,81,0,0.3)", marginBottom: spacing.lg },
+  aartiLeft: { flex: 1 },
+  aartiTag: { color: colors.brandPrimary, fontSize: 10, fontWeight: "700", letterSpacing: 1, marginBottom: 4 },
+  aartiTitle: { fontFamily: fonts.display, fontSize: 18, fontWeight: "700", color: colors.onSurface },
+  aartiMeta: { color: colors.onSurfaceTertiary, fontSize: 12, marginTop: 2 },
+  aartiTimer: { alignItems: "center", backgroundColor: colors.brandPrimary, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: radius.md, minWidth: 68 },
+  aartiTimerBig: { color: colors.onBrand, fontFamily: fonts.display, fontSize: 22, fontWeight: "700" },
+  aartiTimerLbl: { color: colors.onBrand, fontSize: 10, letterSpacing: 0.5, textTransform: "uppercase", fontWeight: "700" },
+  liveRow: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: spacing.md },
+  liveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.success },
+  liveText: { color: colors.success, fontSize: 10, letterSpacing: 1, fontWeight: "700" },
 });

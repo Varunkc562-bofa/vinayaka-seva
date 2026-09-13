@@ -13,7 +13,10 @@ const MODULES = [
   { key: "announcements", label: "Announce", symbol: "📣", route: "/module/announcements", tint: "#F57F17" },
   { key: "gallery", label: "Gallery", symbol: "🖼", route: "/module/gallery", tint: "#2E7D32" },
   { key: "polls", label: "Decisions", symbol: "🗳", route: "/module/polls", tint: "#4E342E" },
-  { key: "shifts", label: "Shifts", symbol: "⏱", route: "/module/shifts", tint: "#6B4E3D" },
+  { key: "donor-wall", label: "Donor Wall", symbol: "🌼", route: "/module/donor-wall", tint: "#B8860B" },
+  { key: "prasadam", label: "Prasadam", symbol: "🍚", route: "/module/prasadam", tint: "#6B4E3D" },
+  { key: "shifts", label: "Shifts", symbol: "⏱", route: "/module/shifts", tint: "#2E7D32" },
+  { key: "sms-settings", label: "SMS Setup", symbol: "✉", route: "/module/sms-settings", tint: "#4E342E" },
   { key: "profile", label: "Profile", symbol: "🌸", route: "/module/profile", tint: "#8B6B00" },
 ];
 

@@ -1,12 +1,11 @@
 import { Tabs } from "expo-router";
-import { Text, View, StyleSheet } from "react-native";
+import { Text, View, StyleSheet, Platform } from "react-native";
 import { colors, fonts } from "@/src/theme";
 
-function TabIcon({ label, focused }: { label: string; focused: boolean }) {
+function TabIcon({ label, focused, glyph }: { label: string; focused: boolean; glyph: string }) {
   return (
     <View style={styles.tab}>
-      <Text style={[styles.dot, { color: focused ? colors.brandPrimary : "transparent" }]}>●</Text>
-      <Text style={[styles.label, { color: focused ? colors.brandPrimary : colors.muted, fontWeight: focused ? "700" : "500" }]}>{label}</Text>
+      <Text style={[styles.glyph, { color: focused ? colors.brandPrimary : colors.muted }]}>{glyph}</Text>
     </View>
   );
 }
@@ -16,26 +15,32 @@ export default function TabsLayout() {
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarShowLabel: false,
+        tabBarActiveTintColor: colors.brandPrimary,
+        tabBarInactiveTintColor: colors.muted,
+        tabBarLabelStyle: { fontSize: 11, fontFamily: fonts.text, fontWeight: "600", letterSpacing: 0.3, marginTop: -2 },
         tabBarStyle: {
           backgroundColor: colors.surfaceSecondary,
           borderTopColor: colors.border,
           borderTopWidth: 1,
-          paddingTop: 8,
+          paddingTop: 6,
+          ...(Platform.OS === "web" ? { height: 68 } : {}),
         },
-        tabBarItemStyle: { alignSelf: "center" },
+        tabBarItemStyle: { alignSelf: "center", paddingVertical: 4 },
       }}
     >
-      <Tabs.Screen name="home" options={{ tabBarIcon: ({ focused }) => <TabIcon label="Home" focused={focused} /> }} />
-      <Tabs.Screen name="tasks" options={{ tabBarIcon: ({ focused }) => <TabIcon label="Tasks" focused={focused} /> }} />
-      <Tabs.Screen name="community" options={{ tabBarIcon: ({ focused }) => <TabIcon label="Community" focused={focused} /> }} />
-      <Tabs.Screen name="more" options={{ tabBarIcon: ({ focused }) => <TabIcon label="More" focused={focused} /> }} />
+      <Tabs.Screen name="home" options={{ tabBarLabel: "Home",
+        tabBarIcon: ({ focused }) => <TabIcon label="Home" focused={focused} glyph="◉" /> }} />
+      <Tabs.Screen name="tasks" options={{ tabBarLabel: "Tasks",
+        tabBarIcon: ({ focused }) => <TabIcon label="Tasks" focused={focused} glyph="✓" /> }} />
+      <Tabs.Screen name="community" options={{ tabBarLabel: "Community",
+        tabBarIcon: ({ focused }) => <TabIcon label="Community" focused={focused} glyph="✦" /> }} />
+      <Tabs.Screen name="more" options={{ tabBarLabel: "More",
+        tabBarIcon: ({ focused }) => <TabIcon label="More" focused={focused} glyph="≡" /> }} />
     </Tabs>
   );
 }
 
 const styles = StyleSheet.create({
-  tab: { alignItems: "center", justifyContent: "center", minWidth: 60 },
-  dot: { fontSize: 8, marginBottom: 2 },
-  label: { fontSize: 12, fontFamily: fonts.text, letterSpacing: 0.3 },
+  tab: { alignItems: "center", justifyContent: "center", minWidth: 60, height: 26 },
+  glyph: { fontSize: 22, fontFamily: fonts.display, lineHeight: 26 },
 });

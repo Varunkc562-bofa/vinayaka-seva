@@ -1,0 +1,59 @@
+{
+  "summary": "Backend-only regression + new-feature testing for Vinayaka Seva v3 (SMS thank-you receipts, SMS-on-donation, Event RSVPs/Prasadam roster). Added /app/backend/tests/test_vinayaka_v3.py with 17 new tests. Full suite (65 tests = 48 existing + 17 new) passes cleanly under the default parallel xdist config (-n 2 --dist loadscope) in ~8s. No regressions. All new endpoints verified: GET /api/config/sms (President 200, hides twilio_token/msg91_authkey but exposes *_set flags; Regular Member 403), PUT /api/config/sms (President 200; blank sensitive fields on subsequent PUT preserve previously stored token — DB-level verification; Regular Member 403), POST /api/config/sms/test (returns status='skipped', reason contains 'twilio_not_configured' when no creds; Regular Member 403). POST /api/donations with phone+send_sms=true writes a sms_logs entry within <5s with status='skipped' when no twilio creds and does NOT block the response; send_sms=false and no-phone paths correctly skip logging. Event RSVP flows: bad status → 400; user1 yes+2 ⇒ yes=1,headcount=3; upsert to no ⇒ yes=0,no=1,headcount=0 (still 1 record — verified upsert, not duplicate); user2 yes+1 ⇒ yes=1,no=1,headcount=2.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/donations", "issue": "Fire-and-forget SMS uses asyncio.get_event_loop().run_in_executor(None, _send_sms_background, ...). Under uvicorn's running loop this works, but is deprecated Python 3.12+ style. Prefer asyncio.get_running_loop() or BackgroundTasks. Non-blocking today though."},
+      {"endpoint": "GET /api/config/sms", "issue": "When no config exists yet, the response is an empty object {} — twilio_token_set/msg91_authkey_set fields aren't present at all (only added when secrets exist). Frontend must treat missing as false; documenting this contract explicitly would help."},
+      {"endpoint": "PUT /api/config/sms", "issue": "The preserve-on-blank logic treats an explicit empty string identically to 'field omitted'. There is no way to CLEAR a previously stored token via this endpoint — a future 'Disconnect Twilio' UX will need a different signal (e.g., a `clear_twilio: true` flag)."},
+      {"endpoint": "POST /api/config/sms/test", "issue": "Route accepts free-form Dict[str, Any] instead of a Pydantic model — no schema validation; missing 'phone' returns 400 but any extra keys pass through silently."},
+      {"endpoint": "GET /api/rsvp/summary", "issue": "Iterates events and does one Mongo find per event (N+1). Fine for small event counts but should be a single aggregation as event list grows."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_vinayaka_v3.py",
+    "/app/backend/tests/test_vinayaka_v2.py",
+    "/app/backend/tests/test_vinayaka_backend.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/pytest_v3_results.xml",
+    "/app/test_reports/pytest/pytest_all_v3_results.xml"
+  ],
+  "action_items": [
+    "Optional: switch _send_sms_background dispatch from asyncio.get_event_loop().run_in_executor(None, ...) to FastAPI BackgroundTasks or asyncio.get_running_loop() for Python 3.12+ future-proofing.",
+    "Optional: add an explicit `clear_twilio`/`clear_msg91` boolean to SmsConfigIn so operators can actually remove a stored token (today, blank always means 'keep').",
+    "Optional: replace Dict[str, Any] with a Pydantic body model on POST /api/config/sms/test (e.g., SmsTestIn { phone: str }).",
+    "Optional: collapse the per-event queries in GET /api/rsvp/summary into a single Mongo aggregation ($lookup or $group) once events count grows.",
+    "(Carried over) server.py is now ~960 lines — split into modules (auth, tasks, donations+sms, expenses, announcements, events+rsvp, uploads+gallery, polls, ai) for maintainability.",
+    "(Carried over) Guard POST /api/dev/seed with a DEMO_MODE env flag so it cannot accidentally wipe real data.",
+    "No frontend testing was requested (testing_type=backend only). Frontend tab-label fix was called out as not needing backend testing — not verified here."
+  ],
+  "critical_code_review_comments": [
+    "Good: GET /api/config/sms strips twilio_token and msg91_authkey from the payload and exposes only *_set booleans — verified end-to-end.",
+    "Good: PUT /api/config/sms preserve-on-blank pattern reads the existing doc and refills any sensitive field left blank in the incoming body — verified via direct DB read after a second PUT.",
+    "Good: POST /api/donations correctly runs SMS send in a threadpool executor so the response returns immediately; the sms_logs entry is created asynchronously and was observable within ~200ms in tests.",
+    "Good: _send_sms_background gracefully writes a sms_logs entry with status='skipped' + reason='twilio_not_configured'/'msg91_not_configured' when creds are absent — never 500s.",
+    "Good: send_sms=false and phone missing paths correctly short-circuit BEFORE dispatch (verified via absence of sms_logs entries after a 1s wait).",
+    "Good: RSVP upsert uses ({event_id, user_id}) as the compound key so a user changing their answer stays as a single row — verified.",
+    "Good: RSVP status is validated (yes/maybe/no) at the endpoint layer, returning 400 for anything else — verified.",
+    "Minor: _send_sms_background opens two separate MongoClient connections (one for config read, one for log write). Consider reusing a single connection or exposing a module-level sync client for background writes.",
+    "Minor: `asyncio.get_event_loop().run_in_executor(None, ...)` is deprecated when there is no current running loop; inside an async endpoint it works because a loop IS running, but `asyncio.get_running_loop()` is preferred for clarity and forward compat.",
+    "Minor: GET /api/rsvp/summary is O(events × rsvps_per_event) with a Mongo round-trip per event — collapse into one aggregation for scale.",
+    "Minor: POST /api/config/sms/test uses raw Dict[str, Any] — no Pydantic model, so extra fields silently ignored.",
+    "Minor: server.py grew from ~800 to ~960 lines this iteration — well past the 700 threshold; strong signal to split into feature modules."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_vinayaka_v3.py (new — 17 tests covering SMS config, SMS-on-donation, Event RSVP)"
+  ],
+  "success_rate": {"backend": "100% (65/65: 48 existing + 17 new; passes under default -n 2 --dist loadscope in ~8s)", "frontend": "not tested (backend-only request)"},
+  "seed_data_creation": "Reused president_headers / member_headers / second_member_headers fixtures from conftest.py (auth-bypass via direct users+user_sessions insertion). SMS tests wipe config with key='sms' before the first PUT for determinism, then re-insert a minimal enabled-but-unconfigured config for the /test and donation flows. Donation SMS tests only assert absence/presence of sms_logs by donation_id (no cleanup needed; TEST_ prefixes used on donor names). RSVP tests wipe db.rsvps at start of the class and create a dedicated TEST_RSVP_Event to isolate summary counts.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "SMS config lives in db.config with key='sms'. Sensitive fields (twilio_token, twilio_sid, twilio_from, msg91_authkey, msg91_sender) are preserved on blank PUT — tests validate this via direct MongoClient read, NOT via GET (since GET intentionally hides tokens). SMS send is fire-and-forget via asyncio.run_in_executor; sms_logs writes typically land within ~200ms but tests poll up to 5s. RSVPs live in db.rsvps with a compound key {event_id, user_id} — upserts, never duplicates. GET /api/rsvp/summary returns one row per event with fields {yes, maybe, no, headcount, yes_list}. Fixtures president_headers, member_headers, second_member_headers in conftest.py; do not add per-test users unless testing role-transitions.",
+  "rca_of_issue": "No unresolved issues in this iteration. All 65 tests pass first-run under the default xdist config."
+}
