@@ -1,0 +1,45 @@
+{
+  "summary": "Backend-only testing of Vinayaka Seva. Built pytest suite covering health, auth (invalid/valid tokens), roles, festival config, seed+dashboard, tasks CRUD (create/list/patch/comment/delete), donations, expenses (create + approve RBAC), announcements, events, members role update (RBAC + invalid role), and AI streaming (SSE deltas + done + history persistence). Bypassed Google OAuth by inserting user + user_sessions directly into MongoDB using MONGO_URL/DB_NAME from backend/.env. Result: 28/28 tests pass when run sequentially (-n 0). Under the default parallel xdist config (-n 2 --dist loadscope), 27/28 pass — a single race condition surfaces because POST /api/dev/seed wipes db.expenses while TestExpenses runs on a different worker; this is a suite-parallelization artifact, not a backend bug (the approve endpoint returns 200 correctly). AI streaming via Gemini 3 Flash preview through EMERGENT_LLM_KEY works end-to-end and messages are persisted in ai_messages.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/dev/seed", "issue": "Destructive: unconditionally wipes donations/expenses/tasks/announcements/events collections with no scoping (e.g., only sample docs or a demo flag). In production this could nuke real data. Consider guarding with an env flag (DEV_SEED_ENABLED) or restricting to a demo/tenant scope."},
+      {"endpoint": "POST /api/auth/session", "issue": "Session token is stored in Mongo with a 7-day expires_at but Emergent OAuth token itself has its own lifetime; there is no refresh path and no /api/auth/logout invalidation UI test. Behavior looks correct; just flagging for completeness."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/conftest.py",
+    "/app/backend/tests/test_vinayaka_backend.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Optional: make POST /api/dev/seed non-destructive (append demo docs with a demo flag, or only allow when env DEMO_MODE=true) so parallel/production runs are safe.",
+    "Optional: add a light guard on the seed endpoint to prevent accidental data wipe outside a demo/dev environment.",
+    "No frontend testing was requested or performed (testing_type=backend only)."
+  ],
+  "critical_code_review_comments": [
+    "server.py is single-file 589 lines — approaching the 700-line split threshold but still acceptable for MVP.",
+    "Good: MongoDB _id is consistently excluded via projection {'_id': 0} and clean() helper.",
+    "Good: All URLs/keys read from environment; no hardcoded values.",
+    "Good: RBAC enforced via require_role() and returns 403 on unauthorized users (verified for /dev/seed, /members/{id}/role, /expenses/{id}/approve).",
+    "Good: session token verified with tz-aware expiry check.",
+    "Minor: PATCH /api/tasks/{id} silently drops unknown fields — fine, but a whitelist-based Pydantic model would be cleaner.",
+    "Minor: on Emergent OAuth first-user promotion, the count check + insert is not race-safe (two simultaneous first users could both become President). Low risk for a committee app but worth a comment/lock in future."
+  ],
+  "updated_files": [
+    "/app/backend/tests/conftest.py (new)",
+    "/app/backend/tests/test_vinayaka_backend.py (new)"
+  ],
+  "success_rate": {"backend": "100% (28/28 sequential; 27/28 under default parallel xdist due to seed race)", "frontend": "not tested"},
+  "seed_data_creation": "Tests insert temporary President and Regular Member users + sessions directly into MongoDB (users, user_sessions) with TEST_-prefixed emails and clean them up in session-scope teardown. POST /api/dev/seed is exercised to populate donations/expenses/tasks/announcements/events for dashboard verification.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Auth bypass pattern: insert into db.users {user_id, email, name, role, ...} and db.user_sessions {session_token, user_id, expires_at (tz-aware, future)}, then send Authorization: Bearer <session_token>. Roles enforced: President required for /dev/seed; President/VP/Secretary for member role updates; President/Treasurer/VP for expense approve. Backend URL is in frontend/.env as EXPO_PUBLIC_BACKEND_URL. Note pytest.ini forces xdist -n 2 loadscope — POST /api/dev/seed wipes collections and will race with other classes; run with `-n 0` for deterministic results, or refactor seed to be non-destructive.",
+  "rca_of_issue": "Single parallel-run failure (TestExpenses.test_approve_as_president under -n 2) — RCA: pytest-xdist loadscope pinned TestExpenses and TestSeedAndDashboard to different workers; POST /api/dev/seed executes `db.expenses.delete_many({})` and wipes the expense created by test_create_expense before test_approve_as_president's verification GET runs. The approve endpoint itself returned 200 (write succeeded, then row was deleted by seed). Mitigation: run `pytest -n 0` (verified: 28/28 pass), or make /api/dev/seed non-destructive/idempotent."
+}

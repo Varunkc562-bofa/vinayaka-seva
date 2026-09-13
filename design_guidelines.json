@@ -1,0 +1,165 @@
+{
+  "app_name": "Vinayaka Seva",
+  "personality": "3 Editorial Mobile LIGHT with 4 Tactile layout structure",
+  "personality_one_liner": "A sophisticated, premium festival command center that feels like an elegant cultural editorial, grounded by friendly oversized tactile cards for effortless management.",
+  "color": {
+    "surface": "#FAFAF5",
+    "onSurface": "#2A2421",
+    "surfaceSecondary": "#FFFFFF",
+    "onSurfaceSecondary": "#2A2421",
+    "surfaceTertiary": "#F1EFE7",
+    "onSurfaceTertiary": "#4A403A",
+    "surfaceInverse": "#2B221E",
+    "onSurfaceInverse": "#FFFFFF",
+    "brand": "#E65100",
+    "onBrand": "#FFFFFF",
+    "brandPrimary": "#E65100",
+    "onBrandPrimary": "#FFFFFF",
+    "brandSecondary": "#D4AF37",
+    "onBrandSecondary": "#2A2421",
+    "brandTertiary": "#FBE9E7",
+    "onBrandTertiary": "#E65100",
+    "success": "#2E7D32",
+    "onSuccess": "#FFFFFF",
+    "warning": "#F57F17",
+    "onWarning": "#2A2421",
+    "error": "#800000",
+    "onError": "#FFFFFF",
+    "info": "#4E342E",
+    "onInfo": "#FFFFFF",
+    "border": "#E8E5DA",
+    "borderStrong": "#D7D2C1",
+    "divider": "#E8E5DA",
+    "muted": "#7D746D"
+  },
+  "typography": {
+    "displayFontFamily": "Cormorant Garamond",
+    "textFontFamily": "Plus Jakarta Sans",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 24
+    }
+  },
+  "spacing": {
+    "rule": "Generous vertical breathing room for headers. Cards should have substantial inner padding (lg/xl) to feel tactile and oversized.",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 8,
+    "md": 16,
+    "lg": 24,
+    "pill": 999
+  },
+  "shadow_tier": "2",
+  "navigation": "bottom_tabs",
+  "icon_set": "Phosphor",
+  "glassmorphism": {
+    "enabled": true,
+    "do's": [
+      "Apply glassmorphism to bottom tab bar and sticky headers over scrollable feeds.",
+      "Use subtle glass over hero images in the Home dashboard.",
+      "Apply glassmorphism for Floating Action Buttons (FAB)."
+    ],
+    "dont's": [
+      "Do not apply glass to standard list items, task cards, or form inputs.",
+      "Do not blur entire screens."
+    ]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "expo-glass-effect",
+      "android": "expo-blur",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "blur": "expo-blur",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "screens": [
+    {
+      "name": "Home Dashboard",
+      "purpose": "Role-based command center featuring a festival countdown and quick-access top metrics.",
+      "states": {
+        "loading": "Centered brand-colored activity indicator with 'Loading Command Center...'",
+        "empty": "Illustration of Diya/Ganesha with 'Your dashboard is ready to be set up.'",
+        "error": "Soft error message with Retry button"
+      },
+      "layout": "Hero section with Ganesha backdrop (gradient scrimmed) showing the countdown. Oversized stat cards (Donations, Volunteers) in a 2-column grid. Horizontal scrolling rail for quick role-based actions."
+    },
+    {
+      "name": "Tasks (My Work)",
+      "purpose": "Tactile Kanban-style board or large list for friendly committee task management.",
+      "states": {
+        "loading": "Skeleton of oversized task cards",
+        "empty": "Icon of a marigold flower with 'All tasks completed. Great seva!'",
+        "error": "Error message with Retry button"
+      },
+      "layout": "Pill-shaped chip filters at the top (To Do, Doing, Done). Oversized cards for tasks with generous padding, assignee initials, and a prominent 'Complete' button."
+    },
+    {
+      "name": "Community (Calendar & Directory)",
+      "purpose": "Central hub for events, cultural programs, and committee member directory.",
+      "states": {
+        "loading": "Skeleton list of events",
+        "empty": "Illustration of festival crowd with 'No upcoming events.'",
+        "error": "Error message with Retry button"
+      },
+      "layout": "Segmented control to toggle between Events and Members. Edge-to-edge cards for events featuring rich imagery. 1-column list with large avatars for the directory."
+    },
+    {
+      "name": "More (Modules)",
+      "purpose": "Grid menu for deeper modules (Donations, Expenses, Seva AI, Voting, Gallery).",
+      "states": {
+        "loading": "Skeleton grid",
+        "empty": "Not applicable",
+        "error": "Not applicable"
+      },
+      "layout": "3-column grid of large square tactile tiles with centered Phosphor icons and Devanagari-styled serif labels."
+    }
+  ],
+  "images": {
+    "hero_ganesha": {
+      "url": "https://images.unsplash.com/photo-1662031225146-42e30158e800?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NzB8MHwxfHNlYXJjaHwyfHxMb3JkJTIwR2FuZXNoYSUyMGlkb2wlMjBmZXN0aXZhbHxlbnwwfHx8fDE3ODkyODM4NjJ8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "A beautiful statue of Lord Ganesha adorned with red roses and yellow marigolds"
+    },
+    "marigold_banner": {
+      "url": "https://images.unsplash.com/photo-1661142175513-a5f0871f1ad1?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2Mzl8MHwxfHNlYXJjaHwxfHxtYXJpZ29sZCUyMGZsb3dlcnMlMjBvcmFuZ2UlMjB5ZWxsb3d8ZW58MHx8fHwxNzg5MjgzODYyfDA&ixlib=rb-4.1.0&q=85",
+      "alt": "A field of vibrant orange marigold flowers"
+    },
+    "temple_texture_bg": {
+      "url": "https://images.unsplash.com/photo-1518880581288-b5b1da4f6a81?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1Nzd8MHwxfHNlYXJjaHwxfHxpbmRpYW4lMjB0ZW1wbGUlMjBhcmNoaXRlY3R1cmUlMjB0ZXh0dXJlfGVufDB8fHxyZWR8MTc4OTI4Mzg2Mnww&ixlib=rb-4.1.0&q=85",
+      "alt": "Pink painted Indian temple wall architecture texture"
+    },
+    "festival_celebration": {
+      "url": "https://images.unsplash.com/photo-1585607344893-43a4bd91169a?crop=entropy&cs=srgb&fm=jpg&ixid=M3w8NjAzNDR8MHwxfHNlYXJjaHwxfHxoaW5kdSUyMGZlc3RpdmFsJTIwY2VsZWJyYXRpb258ZW58MHx8fHwxNzg5MjgzODcxfDA&ixlib=rb-4.1.0&q=85",
+      "alt": "Vibrant Hindu festival celebration with people and colors"
+    }
+  },
+  "instructions_to_main_agent": [
+    "Strictly avoid any blue, purple, or indigo colors. Use the provided Saffron, Gold, and Temple Maroon palette.",
+    "Implement Devanagari-inspired premium serif font (Cormorant Garamond) for headers/titles ONLY. Use Plus Jakarta Sans for all body text and UI labels.",
+    "Do NOT make the app look like an enterprise ERP. Focus on oversized, tactile, friendly components with generous safe padding.",
+    "For the My Work/Tasks screen, use swipeable large cards with haptic feedback to emphasize accomplishment and physical interaction.",
+    "Apply a top-to-bottom vertical gradient scrim whenever rendering text over images (like the Home Hero Ganesha image) to ensure WCAG AAA readability.",
+    "Ensure touch targets are universally 44x44pt or larger, as this app is intended for non-technical community members.",
+    "Utilize Bottom Sheets for forms (like logging a donation or marking a task complete) instead of full-page navigation to minimize context switching.",
+    "Include subtle haptics on task completions, filter chip toggles, and primary CTA buttons."
+  ],
+  "haptics": {
+    "primary_button_press": "ImpactFeedbackStyle.Light",
+    "task_complete": "ImpactFeedbackStyle.Medium",
+    "tab_switch": "ImpactFeedbackStyle.Light",
+    "drag_start": "ImpactFeedbackStyle.Medium"
+  }
+}
