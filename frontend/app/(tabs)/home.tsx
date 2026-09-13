@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { View, Text, ScrollView, Pressable, StyleSheet, RefreshControl, ActivityIndicator } from "react-native";
+import { View, Text, ScrollView, Pressable, StyleSheet, RefreshControl, ActivityIndicator, Modal } from "react-native";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -7,9 +7,29 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
+import { storage } from "@/src/utils/storage";
 import { colors, fonts, radius, spacing } from "@/src/theme";
 
 const HERO = "https://images.unsplash.com/photo-1662031225146-42e30158e800?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NzB8MHwxfHNlYXJjaHwyfHxMb3JkJTIwR2FuZXNoYSUyMGlkb2wlMjBmZXN0aXZhbHxlbnwwfHx8fDE3ODkyODM4NjJ8MA&ixlib=rb-4.1.0&q=85";
+
+// All available quick actions the user can pick from.
+const ALL_ACTIONS: { key: string; label: string; symbol: string; route: string }[] = [
+  { key: "donation",  label: "Log donation",  symbol: "₹",  route: "/module/donations" },
+  { key: "expense",   label: "Add expense",   symbol: "₹",  route: "/module/expenses" },
+  { key: "task",      label: "New task",      symbol: "✓",  route: "/(tabs)/tasks" },
+  { key: "ann",       label: "Announce",      symbol: "📣", route: "/module/announcements" },
+  { key: "ai",        label: "Seva AI",       symbol: "ॐ",  route: "/module/seva-ai" },
+  { key: "gallery",   label: "Gallery",       symbol: "🖼", route: "/module/gallery" },
+  { key: "polls",     label: "Decisions",     symbol: "🗳", route: "/module/polls" },
+  { key: "prasadam",  label: "Prasadam",      symbol: "🍚", route: "/module/prasadam" },
+  { key: "donor",     label: "Donor Wall",    symbol: "🌼", route: "/module/donor-wall" },
+  { key: "event",     label: "New event",     symbol: "📅", route: "/(tabs)/community" },
+  { key: "shifts",    label: "Shifts",        symbol: "⏱",  route: "/module/shifts" },
+  { key: "sms",       label: "SMS Setup",     symbol: "✉",  route: "/module/sms-settings" },
+];
+
+const DEFAULT_KEYS = ["donation", "expense", "task", "ann", "ai"];
+const QA_STORAGE_KEY = "vs_quick_actions_v1";
 
 function fmtINR(n: number) {
   return "₹" + Math.round(n).toLocaleString("en-IN");
@@ -60,6 +80,38 @@ export default function Home() {
     const remainMs = new Date(best.starts_at).getTime() - nowTs;
     return { event: best, remainMs };
   }, [events.data, nowTs]);
+
+  // Quick Actions: load selection from storage, allow user to edit.
+  const [selectedKeys, setSelectedKeys] = useState<string[]>(DEFAULT_KEYS);
+  const [editing, setEditing] = useState(false);
+  useEffect(() => {
+    (async () => {
+      const raw = await storage.getItem(QA_STORAGE_KEY, "");
+      if (typeof raw === "string" && raw) {
+        try {
+          const arr = JSON.parse(raw);
+          if (Array.isArray(arr) && arr.every(k => typeof k === "string")) {
+            setSelectedKeys(arr);
+          }
+        } catch {}
+      }
+    })();
+  }, []);
+  const persist = async (keys: string[]) => {
+    setSelectedKeys(keys);
+    await storage.setItem(QA_STORAGE_KEY, JSON.stringify(keys));
+  };
+  const toggleKey = (k: string) => {
+    const next = selectedKeys.includes(k)
+      ? selectedKeys.filter(x => x !== k)
+      : [...selectedKeys, k];
+    persist(next);
+  };
+  const resetActions = () => persist(DEFAULT_KEYS);
+  const selectedActions = useMemo(
+    () => selectedKeys.map(k => ALL_ACTIONS.find(a => a.key === k)).filter(Boolean) as typeof ALL_ACTIONS,
+    [selectedKeys]
+  );
 
   const roleView = user?.role || "Member";
 
@@ -152,14 +204,24 @@ export default function Home() {
             </View>
 
             {/* Quick actions rail */}
-            <Text style={styles.sectionTitle}>Quick actions</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.md, paddingHorizontal: 2, paddingBottom: 4 }}>
-              <QuickAction label="Log donation" onPress={() => router.push("/module/donations")} testID="qa-donation" />
-              <QuickAction label="Add expense" onPress={() => router.push("/module/expenses")} testID="qa-expense" />
-              <QuickAction label="New task" onPress={() => router.push("/(tabs)/tasks")} testID="qa-task" />
-              <QuickAction label="Announce" onPress={() => router.push("/module/announcements")} testID="qa-ann" />
-              <QuickAction label="Seva AI" onPress={() => router.push("/module/seva-ai")} testID="qa-ai" />
-            </ScrollView>
+            <View style={styles.qaHeaderRow}>
+              <Text style={styles.sectionTitle}>Quick actions</Text>
+              <Pressable onPress={() => setEditing(true)} style={styles.editBtn} testID="qa-edit-button">
+                <Text style={styles.editBtnText}>Edit</Text>
+              </Pressable>
+            </View>
+            {selectedActions.length === 0 ? (
+              <Pressable onPress={() => setEditing(true)} style={styles.qaEmpty} testID="qa-empty">
+                <Text style={styles.qaEmptyText}>No quick actions yet — tap to pick your favourites</Text>
+              </Pressable>
+            ) : (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.md, paddingHorizontal: 2, paddingBottom: 4 }}>
+                {selectedActions.map(a => (
+                  <QuickAction key={a.key} label={a.label} symbol={a.symbol}
+                    onPress={() => router.push(a.route as any)} testID={`qa-${a.key}`} />
+                ))}
+              </ScrollView>
+            )}
 
             {/* Today's events */}
             <Text style={styles.sectionTitle}>Today's events</Text>
@@ -194,6 +256,42 @@ export default function Home() {
           </>
         )}
       </View>
+
+      {/* Edit Quick Actions Modal */}
+      <Modal visible={editing} transparent animationType="slide" onRequestClose={() => setEditing(false)}>
+        <Pressable style={styles.backdrop} onPress={() => setEditing(false)} />
+        <View style={[styles.editSheet, { paddingBottom: insets.bottom + spacing.xl }]} testID="qa-edit-sheet">
+          <View style={styles.editHandle} />
+          <View style={styles.editHeader}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.editTitle}>Quick actions</Text>
+              <Text style={styles.editSub}>Add or remove shortcuts on your Home screen. Saved on this device.</Text>
+            </View>
+            <Pressable onPress={resetActions} style={styles.resetBtn} testID="qa-reset-button">
+              <Text style={styles.resetTxt}>Reset</Text>
+            </Pressable>
+          </View>
+          <ScrollView style={{ maxHeight: 460 }}>
+            {ALL_ACTIONS.map(a => {
+              const checked = selectedKeys.includes(a.key);
+              return (
+                <Pressable key={a.key} onPress={() => toggleKey(a.key)} style={styles.editItem} testID={`qa-toggle-${a.key}`}>
+                  <View style={styles.editItemLeft}>
+                    <View style={styles.editIcon}><Text style={styles.editIconTxt}>{a.symbol}</Text></View>
+                    <Text style={styles.editItemLabel}>{a.label}</Text>
+                  </View>
+                  <View style={[styles.editCheck, checked && { backgroundColor: colors.brandPrimary, borderColor: colors.brandPrimary }]}>
+                    {checked ? <Text style={{ color: colors.onBrand, fontWeight: "800" }}>✓</Text> : null}
+                  </View>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+          <Pressable onPress={() => setEditing(false)} style={styles.doneBtn} testID="qa-done-button">
+            <Text style={styles.doneTxt}>Done</Text>
+          </Pressable>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }
@@ -233,10 +331,10 @@ function MiniCard({ label, value, tone, onPress, testID }: any) {
   );
 }
 
-function QuickAction({ label, onPress, testID }: any) {
+function QuickAction({ label, symbol = "ॐ", onPress, testID }: any) {
   return (
     <Pressable onPress={onPress} style={styles.qa} testID={testID}>
-      <View style={styles.qaCircle}><Text style={styles.qaDot}>ॐ</Text></View>
+      <View style={styles.qaCircle}><Text style={styles.qaDot}>{symbol}</Text></View>
       <Text style={styles.qaLabel}>{label}</Text>
     </Pressable>
   );
@@ -302,4 +400,25 @@ const styles = StyleSheet.create({
   liveRow: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: spacing.md },
   liveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.success },
   liveText: { color: colors.success, fontSize: 10, letterSpacing: 1, fontWeight: "700" },
+  qaHeaderRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: spacing.xl, marginBottom: spacing.md },
+  editBtn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.brandPrimary },
+  editBtnText: { color: colors.brandPrimary, fontWeight: "700", fontSize: 12, letterSpacing: 0.5, textTransform: "uppercase" },
+  qaEmpty: { backgroundColor: colors.brandTertiary, padding: spacing.lg, borderRadius: radius.md, borderWidth: 1, borderColor: "rgba(230,81,0,0.2)", borderStyle: "dashed" },
+  qaEmptyText: { color: colors.brandPrimary, textAlign: "center", fontWeight: "600" },
+  backdrop: { flex: 1, backgroundColor: "rgba(43,34,30,0.5)" },
+  editSheet: { backgroundColor: colors.surface, borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: spacing.xl, position: "absolute", left: 0, right: 0, bottom: 0, maxHeight: "88%" },
+  editHandle: { alignSelf: "center", width: 42, height: 4, borderRadius: 2, backgroundColor: colors.borderStrong, marginBottom: spacing.md },
+  editHeader: { flexDirection: "row", alignItems: "flex-start", marginBottom: spacing.md },
+  editTitle: { fontFamily: fonts.display, fontSize: 22, fontWeight: "600", color: colors.onSurface },
+  editSub: { color: colors.muted, fontSize: 12, marginTop: 2 },
+  resetBtn: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: radius.pill, backgroundColor: colors.surfaceTertiary },
+  resetTxt: { color: colors.onSurfaceTertiary, fontWeight: "700", fontSize: 12 },
+  editItem: { flexDirection: "row", alignItems: "center", paddingVertical: 14, paddingHorizontal: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.border },
+  editItemLeft: { flexDirection: "row", alignItems: "center", flex: 1, gap: spacing.md },
+  editIcon: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.brandTertiary, alignItems: "center", justifyContent: "center" },
+  editIconTxt: { fontSize: 20, color: colors.brandPrimary, fontFamily: fonts.display },
+  editItemLabel: { color: colors.onSurface, fontSize: 15, fontWeight: "600" },
+  editCheck: { width: 24, height: 24, borderRadius: 6, borderWidth: 2, borderColor: colors.borderStrong, alignItems: "center", justifyContent: "center" },
+  doneBtn: { marginTop: spacing.md, paddingVertical: 16, borderRadius: radius.pill, backgroundColor: colors.brandPrimary, alignItems: "center" },
+  doneTxt: { color: colors.onBrand, fontSize: 15, fontWeight: "700" },
 });

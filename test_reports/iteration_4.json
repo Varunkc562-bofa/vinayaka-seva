@@ -1,0 +1,33 @@
+{
+  "summary": "Frontend-only validation of the customizable Quick Actions feature on Home (Vinayaka Seva). Auth-bypassed via direct MongoDB insert of a users doc (user_id=user_test_qa, role=President) + user_sessions doc (session_token=test-token-qa, +30d) and localStorage['vs_session_token']. Ran two Playwright passes on mobile viewport 390x844 against https://festival-hub-46.preview.emergentagent.com/. All 10 acceptance criteria pass: (1) Home renders with qa-edit-button, (2) default 5 QuickActions (qa-donation, qa-expense, qa-task, qa-ann, qa-ai) present, (3) qa-gallery absent initially, (4) tapping qa-edit-button opens qa-edit-sheet, (5) all 12 qa-toggle-* rows render (donation, expense, task, ann, ai, gallery, polls, prasadam, donor, event, shifts, sms), (6) toggling qa-toggle-gallery adds qa-gallery to Home after Done, (7) toggling qa-toggle-donation removes qa-donation from Home, (8) selection persists across full page reload (verified expense/task/ann/ai/gallery present, donation absent), (9) qa-reset-button restores exactly the 5 defaults (verified 5 defaults present, 7 others absent), (10) unchecking all 5 defaults shows qa-empty state. No pageerrors, no red-screen. Only console noise is the well-known RN-web \"shadow*\" style-prop deprecation warning (non-blocking, not related to this feature).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "RN-web style deprecation", "issue": "Non-blocking console warning: '\"shadow*\" style props are deprecated. Use \"boxShadow\".' Emitted repeatedly by react-native-web on app boot. Unrelated to Quick Actions feature but worth tracking; upgrade RN-web / migrate shadow* → boxShadow in shared styles when convenient. Reference: appears from bundled RN-web build, not this file."}
+    ]
+  },
+  "test_report_links": ["/app/test_reports/iteration_4.json"],
+  "action_items": [
+    "Nothing required for Quick Actions — feature is fully working, meets all 10 acceptance criteria, and persistence is correct.",
+    "Optional (tracked, not this feature): migrate shadow* style props to boxShadow to silence RN-web deprecation warnings."
+  ],
+  "critical_code_review_comments": [
+    "Good: All required testIDs present exactly as specified (qa-edit-button, qa-edit-sheet, qa-toggle-{key}×12, qa-reset-button, qa-done-button, qa-empty, qa-{key}).",
+    "Good: Persistence uses storage.setItem with JSON.stringify(keys) under key 'vs_quick_actions_v1'; reload correctly restores state (verified end-to-end).",
+    "Good: Empty-state Pressable is the qa-empty card itself — tapping it re-opens the sheet, nice UX detail.",
+    "Good: DEFAULT_KEYS is a single source of truth; resetActions() → persist(DEFAULT_KEYS) is clean.",
+    "Minor: home.tsx is ~425 lines with modal, styles, and helpers all inline. Consider extracting <QuickActionsRail /> + <QuickActionsEditSheet /> into /src/components/home/ for maintainability. Not blocking.",
+    "Minor: toggleKey / persist reads from selectedKeys state closure — if two toggles are tapped in the same tick, the second could stomp the first. In practice user taps are debounced by React batching + Modal ScrollView, but a functional setState (setSelectedKeys(prev => ...)) then persist would be safer.",
+    "Minor: The Modal uses animationType='slide' with a Pressable backdrop that only dismisses on backdrop tap — good; keyboard back/Escape handled via onRequestClose. No focus trap needed on web for this simple sheet."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "not tested (frontend-only request)", "frontend": "100% (10/10 acceptance criteria)"},
+  "seed_data_creation": "Inserted MongoDB (test_database): users doc {user_id:'user_test_qa', email:'qa@test.local', name:'QA Tester', role:'President'} and user_sessions doc {session_token:'test-token-qa', user_id:'user_test_qa', expires_at:+30d}. Verified via curl -H 'Authorization: Bearer test-token-qa' /api/auth/me → 200 with correct user. Auth-gate bypass is stable and reusable.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Auth bypass for web preview: insert users + user_sessions rows in MongoDB (mongodb://localhost:27017 / test_database), then in browser localStorage.setItem('vs_session_token','<token>') BEFORE navigating. AuthContext reads vs_session_token on boot and hits /api/auth/me. Home renders quick actions only AFTER the dashboard useQuery resolves — wait_for_selector on [data-testid=qa-edit-button] (up to 30s) instead of just home-screen. The Edit sheet's ScrollView means later toggles (gallery/polls/prasadam/donor/event/shifts/sms) are offscreen — always call element.scroll_into_view_if_needed() before clicking, and prefer bounding_box + mouse.click as fallback when Playwright reports 'outside of viewport'. Storage key is 'vs_quick_actions_v1'; clear IndexedDB (AsyncStorage-web backend) between tests to reset to defaults.",
+  "rca_of_issue": "Original user complaint 'unable to add or remove any quick actions' — root cause was that the Home Quick Actions rail was previously hardcoded with no editing UI. Fix (already implemented by main agent in home.tsx L15-32, L84-114, L207-224, L260-294) adds: a Pressable Edit pill next to the section header, a Modal bottom sheet listing all 12 shortcuts with checkbox rows, a Reset button restoring 5 defaults, a Done button, an empty-state card when 0 selected, and AsyncStorage persistence under 'vs_quick_actions_v1'. All test scenarios verified against the deployed preview — feature works end-to-end and persists across reload. No unresolved issues."
+}
