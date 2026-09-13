@@ -169,6 +169,19 @@ class RsvpIn(BaseModel):
     status: str = "yes"  # yes | maybe | no
     plus_ones: int = 0
 
+class EventEdit(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    starts_at: Optional[str] = None
+    location: Optional[str] = None
+    category: Optional[str] = None
+
+class AnnouncementEdit(BaseModel):
+    title: Optional[str] = None
+    body: Optional[str] = None
+    pinned: Optional[bool] = None
+    image_url: Optional[str] = None
+
 class ExpenseIn(BaseModel):
     amount: float
     category: str  # decoration, pooja, food, cultural, security, misc
@@ -248,6 +261,28 @@ def cscope(user: dict) -> Dict[str, Any]:
 def crole(user: dict, *roles: str) -> None:
     if user.get("role") not in roles:
         raise HTTPException(403, "Forbidden")
+
+async def emit_notification(user: dict, kind: str, title: str, body: str,
+                             entity_id: Optional[str] = None, tint: str = "brand"):
+    """Push a notification into the committee's activity feed."""
+    doc = {
+        "notification_id": uid("ntf"),
+        "committee_id": user["committee_id"],
+        "kind": kind,               # donation | expense | event | announcement
+        "title": title,
+        "body": body,
+        "entity_id": entity_id,
+        "tint": tint,
+        "by_id": user["user_id"],
+        "by_name": user["name"],
+        "created_at": now_utc(),
+        "read_by": [],              # user_ids who have read this
+    }
+    try:
+        await db.notifications.insert_one(doc)
+    except Exception as e:
+        logger.warning("emit_notification failed: %s", e)
+    return doc
 
 # ---------- Auth ----------
 @api.post("/auth/session")
@@ -425,10 +460,21 @@ async def create_task(body: TaskIn, user: dict = Depends(get_user_with_committee
 
 @api.patch("/tasks/{task_id}")
 async def update_task(task_id: str, body: Dict[str, Any], user: dict = Depends(get_user_with_committee)):
+    cur = await db.tasks.find_one({"task_id": task_id, **cscope(user)}, {"_id": 0})
+    if not cur:
+        raise HTTPException(404, "not_found")
     body = {k: v for k, v in body.items() if k in {"title", "description", "priority",
               "status", "due_at", "assignee_id", "assignee_name", "photo_url"}}
     if not body:
         raise HTTPException(400, "No valid fields")
+    # Status-only toggles allowed by anyone in the committee (check off / cycle)
+    is_status_only = set(body.keys()) == {"status"}
+    if not is_status_only:
+        is_officer = user.get("role") in ("President", "Vice President", "Secretary")
+        is_author = cur.get("created_by") == user["user_id"] or cur.get("created_by_name") == user["name"]
+        is_assignee = cur.get("assignee_id") == user["user_id"]
+        if not (is_officer or is_author or is_assignee):
+            raise HTTPException(403, "not_allowed")
     body["updated_at"] = now_utc()
     await db.tasks.update_one({"task_id": task_id, **cscope(user)}, {
         "$set": body,
@@ -447,6 +493,13 @@ async def add_comment(task_id: str, body: TaskComment, user: dict = Depends(get_
 
 @api.delete("/tasks/{task_id}")
 async def delete_task(task_id: str, user: dict = Depends(get_user_with_committee)):
+    cur = await db.tasks.find_one({"task_id": task_id, **cscope(user)}, {"_id": 0})
+    if not cur:
+        raise HTTPException(404, "not_found")
+    is_officer = user.get("role") in ("President", "Vice President", "Secretary")
+    is_author = cur.get("created_by") == user["user_id"] or cur.get("created_by_name") == user["name"]
+    if not (is_officer or is_author):
+        raise HTTPException(403, "not_allowed")
     await db.tasks.delete_one({"task_id": task_id, **cscope(user)})
     return {"ok": True}
 
@@ -527,6 +580,11 @@ async def create_donation(body: DonationIn, user: dict = Depends(get_user_with_c
     d["created_by"] = user["name"]
     await db.donations.insert_one(d)
     resp = clean({**d})
+    await emit_notification(user, "donation",
+        f"₹{int(d['paid_amount'])} donation by {d['donor_name']}",
+        (f"Pledged ₹{int(d['amount'])} · Paid ₹{int(d['paid_amount'])}" if d['amount'] != d['paid_amount']
+         else f"Logged by {user['name']}"),
+        entity_id=d["donation_id"], tint="brand")
     if send_sms and d.get("phone"):
         import asyncio
         asyncio.get_event_loop().run_in_executor(None, _send_sms_background, {**d, "created_at": d["created_at"].isoformat()})
@@ -619,6 +677,10 @@ async def create_expense(body: ExpenseIn, user: dict = Depends(get_user_with_com
     e["created_by"] = user["name"]
     e["created_by_id"] = user["user_id"]
     await db.expenses.insert_one(e)
+    await emit_notification(user, "expense",
+        f"Expense ₹{int(e['amount'])} · {e.get('category','misc')}",
+        f"{e.get('vendor') or 'No vendor'} — {e.get('description') or ''}".strip(" —"),
+        entity_id=e["expense_id"], tint="error")
     return clean({**e})
 
 @api.patch("/expenses/{expense_id}/approve")
@@ -663,7 +725,39 @@ async def create_announcement(body: AnnouncementIn, user: dict = Depends(get_use
     a["author"] = user["name"]
     a["author_role"] = user["role"]
     await db.announcements.insert_one(a)
+    await emit_notification(user, "announcement",
+        f"📣 {a['title']}",
+        (a.get("body") or "")[:140],
+        entity_id=a["announcement_id"], tint="gold")
     return clean({**a})
+
+@api.patch("/announcements/{announcement_id}")
+async def edit_announcement(announcement_id: str, body: AnnouncementEdit, user: dict = Depends(get_user_with_committee)):
+    cur = await db.announcements.find_one({"announcement_id": announcement_id, **cscope(user)}, {"_id": 0})
+    if not cur:
+        raise HTTPException(404, "not_found")
+    is_officer = user.get("role") in ("President", "Vice President", "Secretary")
+    is_author = cur.get("author") == user["name"]
+    if not (is_officer or is_author):
+        raise HTTPException(403, "not_allowed")
+    update = {k: v for k, v in body.dict().items() if v is not None}
+    if not update:
+        raise HTTPException(400, "no_changes")
+    update["updated_at"] = now_utc()
+    await db.announcements.update_one({"announcement_id": announcement_id, **cscope(user)}, {"$set": update})
+    return clean(await db.announcements.find_one({"announcement_id": announcement_id}, {"_id": 0}))
+
+@api.delete("/announcements/{announcement_id}")
+async def delete_announcement(announcement_id: str, user: dict = Depends(get_user_with_committee)):
+    cur = await db.announcements.find_one({"announcement_id": announcement_id, **cscope(user)}, {"_id": 0})
+    if not cur:
+        raise HTTPException(404, "not_found")
+    is_officer = user.get("role") in ("President", "Vice President", "Secretary")
+    is_author = cur.get("author") == user["name"]
+    if not (is_officer or is_author):
+        raise HTTPException(403, "not_allowed")
+    await db.announcements.delete_one({"announcement_id": announcement_id, **cscope(user)})
+    return {"ok": True}
 
 # ---------- Events ----------
 @api.get("/events")
@@ -679,7 +773,41 @@ async def create_event(body: EventIn, user: dict = Depends(get_user_with_committ
     e["created_at"] = now_utc()
     e["created_by"] = user["name"]
     await db.events.insert_one(e)
+    await emit_notification(user, "event",
+        f"📅 {e['title']}",
+        f"{e.get('category','')} · {e.get('location') or ''}".strip(" ·"),
+        entity_id=e["event_id"], tint="success")
     return clean({**e})
+
+@api.patch("/events/{event_id}")
+async def edit_event(event_id: str, body: EventEdit, user: dict = Depends(get_user_with_committee)):
+    cur = await db.events.find_one({"event_id": event_id, **cscope(user)}, {"_id": 0})
+    if not cur:
+        raise HTTPException(404, "not_found")
+    is_officer = user.get("role") in ("President", "Vice President", "Secretary")
+    is_author = cur.get("created_by") == user["name"]
+    if not (is_officer or is_author):
+        raise HTTPException(403, "not_allowed")
+    update = {k: v for k, v in body.dict().items() if v is not None}
+    if not update:
+        raise HTTPException(400, "no_changes")
+    update["updated_at"] = now_utc()
+    await db.events.update_one({"event_id": event_id, **cscope(user)}, {"$set": update})
+    return clean(await db.events.find_one({"event_id": event_id}, {"_id": 0}))
+
+@api.delete("/events/{event_id}")
+async def delete_event(event_id: str, user: dict = Depends(get_user_with_committee)):
+    cur = await db.events.find_one({"event_id": event_id, **cscope(user)}, {"_id": 0})
+    if not cur:
+        raise HTTPException(404, "not_found")
+    is_officer = user.get("role") in ("President", "Vice President", "Secretary")
+    is_author = cur.get("created_by") == user["name"]
+    if not (is_officer or is_author):
+        raise HTTPException(403, "not_allowed")
+    await db.events.delete_one({"event_id": event_id, **cscope(user)})
+    # Cascade RSVPs for cleanliness
+    await db.rsvps.delete_many({"event_id": event_id, **cscope(user)})
+    return {"ok": True}
 
 # ---------- Event RSVPs (Prasadam Roster) ----------
 @api.get("/events/{event_id}/rsvps")
@@ -1105,6 +1233,41 @@ async def polls_close(poll_id: str, user: dict = Depends(get_user_with_committee
     if poll.get("created_by_id") != user["user_id"] and user.get("role") not in ("President", "Vice President", "Secretary"):
         raise HTTPException(403, "not_allowed")
     await db.polls.update_one({"poll_id": poll_id, **cscope(user)}, {"$set": {"status": "closed", "closed_at": now_utc()}})
+    return {"ok": True}
+
+# ---------- Notifications / Activity feed ----------
+@api.get("/notifications")
+async def list_notifications(user: dict = Depends(get_user_with_committee)):
+    items = await db.notifications.find(cscope(user), {"_id": 0}).sort("created_at", -1).to_list(200)
+    uid_ = user["user_id"]
+    out = []
+    unread = 0
+    for n in items:
+        n = clean(n) or {}
+        is_read = uid_ in (n.get("read_by") or [])
+        if not is_read:
+            unread += 1
+        n["is_read"] = is_read
+        n.pop("read_by", None)
+        out.append(n)
+    return {"items": out, "unread": unread}
+
+@api.get("/notifications/unread-count")
+async def unread_count(user: dict = Depends(get_user_with_committee)):
+    items = await db.notifications.find(cscope(user), {"_id": 0, "read_by": 1, "notification_id": 1}).to_list(500)
+    uid_ = user["user_id"]
+    return {"unread": sum(1 for n in items if uid_ not in (n.get("read_by") or []))}
+
+class MarkReadIn(BaseModel):
+    ids: Optional[List[str]] = None
+    all: bool = False
+
+@api.post("/notifications/mark-read")
+async def mark_read(body: MarkReadIn, user: dict = Depends(get_user_with_committee)):
+    q: Dict[str, Any] = {**cscope(user)}
+    if not body.all and body.ids:
+        q["notification_id"] = {"$in": body.ids}
+    await db.notifications.update_many(q, {"$addToSet": {"read_by": user["user_id"]}})
     return {"ok": True}
 
 # ---------- Include router ----------

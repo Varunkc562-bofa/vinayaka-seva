@@ -20,16 +20,27 @@ export default function Community() {
   const { user } = useAuth();
   const [tab, setTab] = useState<"events" | "members">("events");
   const [showNew, setShowNew] = useState(false);
+  const [editing, setEditing] = useState<any>(null);
   const [title, setTitle] = useState(""); const [loc, setLoc] = useState("");
   const [starts, setStarts] = useState(""); const [cat, setCat] = useState("cultural");
+  const [confirmDel, setConfirmDel] = useState(false);
   const [rolePickFor, setRolePickFor] = useState<any>(null);
 
   const events = useQuery({ queryKey: ["events"], queryFn: api.events });
   const members = useQuery({ queryKey: ["members"], queryFn: api.members });
 
+  const resetForm = () => { setShowNew(false); setEditing(null); setTitle(""); setLoc(""); setStarts(""); setCat("cultural"); setConfirmDel(false); };
   const createEv = useMutation({
     mutationFn: (d: any) => api.createEvent(d),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["events"] }); setShowNew(false); setTitle(""); setLoc(""); setStarts(""); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["events"] }); resetForm(); },
+  });
+  const editEv = useMutation({
+    mutationFn: ({ id, d }: any) => api.editEvent(id, d),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["events"] }); resetForm(); },
+  });
+  const deleteEv = useMutation({
+    mutationFn: (id: string) => api.deleteEvent(id),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["events"] }); qc.invalidateQueries({ queryKey: ["rsvpSummary"] }); resetForm(); },
   });
   const updateRole = useMutation({
     mutationFn: ({ id, role }: any) => api.updateRole(id, role),
@@ -37,6 +48,25 @@ export default function Community() {
   });
 
   const canManageRoles = ["President", "Vice President", "Secretary"].includes(user?.role || "");
+  const canEditEvent = (e: any) => ["President","Vice President","Secretary"].includes(user?.role || "") || e?.created_by === user?.name;
+
+  const openNew = () => { resetForm(); setShowNew(true); };
+  const openEdit = (e: any) => {
+    if (!canEditEvent(e)) return;
+    setEditing(e); setTitle(e.title || ""); setLoc(e.location || "");
+    const d = new Date(e.starts_at);
+    if (!isNaN(d.getTime())) {
+      const pad = (n: number) => String(n).padStart(2, "0");
+      setStarts(`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`);
+    } else setStarts("");
+    setCat(e.category || "cultural"); setConfirmDel(false); setShowNew(true);
+  };
+
+  const save = () => {
+    const payload = { title, location: loc, category: cat, starts_at: parseDate(starts) };
+    if (editing) editEv.mutate({ id: editing.event_id, d: payload });
+    else createEv.mutate(payload);
+  };
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }} testID="community-screen">
@@ -44,7 +74,7 @@ export default function Community() {
         title="Community"
         subtitle="Events, members & seva teams"
         right={tab === "events" ? (
-          <Pressable onPress={() => setShowNew(true)} style={styles.addBtn} testID="new-event-button">
+          <Pressable onPress={openNew} style={styles.addBtn} testID="new-event-button">
             <Text style={styles.addTxt}>+</Text>
           </Pressable>
         ) : null}
@@ -62,15 +92,15 @@ export default function Community() {
           events.isLoading ? <ActivityIndicator color={colors.brandPrimary} /> :
           events.data?.length === 0 ? <Empty title="No events yet" body="Add pooja, cultural, or annadanam events." testID="events-empty" /> :
           events.data.map((e: any) => (
-            <View key={e.event_id} style={styles.card}>
+            <Pressable key={e.event_id} onPress={() => openEdit(e)} style={styles.card} testID={`event-row-${e.event_id}`}>
               <View style={styles.tagRow}>
                 <View style={styles.catPill}><Text style={styles.catText}>{e.category}</Text></View>
                 <Text style={styles.date}>{fmtDate(e.starts_at)}</Text>
               </View>
               <Text style={styles.eTitle}>{e.title}</Text>
               {e.description ? <Text style={styles.eBody}>{e.description}</Text> : null}
-              {e.location ? <Text style={styles.eMeta}>📍 {e.location}</Text> : null}
-            </View>
+              {e.location ? <Text style={styles.eMeta}>📍 {e.location}{canEditEvent(e) ? " · Tap to edit" : ""}</Text> : (canEditEvent(e) ? <Text style={styles.eMeta}>Tap to edit</Text> : null)}
+            </Pressable>
           ))
         ) : (
           members.isLoading ? <ActivityIndicator color={colors.brandPrimary} /> :
@@ -88,7 +118,7 @@ export default function Community() {
         )}
       </ScrollView>
 
-      <BottomSheet visible={showNew} onClose={() => setShowNew(false)} title="New event" testID="new-event-sheet">
+      <BottomSheet visible={showNew} onClose={() => { setShowNew(false); setEditing(null); setConfirmDel(false); }} title={editing ? "Edit event" : "New event"} testID="new-event-sheet">
         <Field label="Title" value={title} onChangeText={setTitle} placeholder="Ganesh Aarti" />
         <Field label="Location" value={loc} onChangeText={setLoc} placeholder="Community pandal" />
         <Field label="Starts at (YYYY-MM-DD HH:MM)" value={starts} onChangeText={setStarts} placeholder="2026-08-27 18:00" />
@@ -101,8 +131,16 @@ export default function Community() {
             </Pressable>
           ))}
         </View>
-        <Button label={createEv.isPending ? "Saving…" : "Save event"} disabled={createEv.isPending || !title.trim()}
-          onPress={() => createEv.mutate({ title, location: loc, category: cat, starts_at: parseDate(starts) })} testID="save-event-button" />
+        <Button label={(createEv.isPending || editEv.isPending) ? "Saving…" : (editing ? "Save changes" : "Save event")} disabled={createEv.isPending || editEv.isPending || !title.trim()}
+          onPress={save} testID="save-event-button" />
+        {editing ? (
+          <Pressable onPress={() => confirmDel ? deleteEv.mutate(editing.event_id) : setConfirmDel(true)}
+            style={[styles.delBtn, confirmDel && styles.delBtnConfirm]} testID="delete-event-button">
+            <Text style={[styles.delTxt, confirmDel && { color: colors.onError }]}>
+              {deleteEv.isPending ? "Deleting…" : confirmDel ? "Tap again to confirm delete" : "🗑  Delete this event"}
+            </Text>
+          </Pressable>
+        ) : null}
       </BottomSheet>
 
       <Modal visible={!!rolePickFor} transparent animationType="fade" onRequestClose={() => setRolePickFor(null)}>
@@ -154,4 +192,7 @@ const styles = StyleSheet.create({
   roleTitle: { fontFamily: fonts.display, fontSize: 22, fontWeight: "600", color: colors.onSurface },
   roleSub: { color: colors.muted, marginTop: 2 },
   roleItem: { paddingVertical: 14, paddingHorizontal: spacing.md, borderRadius: radius.md, marginBottom: 4 },
+  delBtn: { marginTop: spacing.md, paddingVertical: 14, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.error, alignItems: "center" },
+  delBtnConfirm: { backgroundColor: colors.error, borderColor: colors.error },
+  delTxt: { color: colors.error, fontWeight: "700", fontSize: 14 },
 });

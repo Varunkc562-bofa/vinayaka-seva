@@ -1,0 +1,36 @@
+{
+  "summary": "Backend-only verification for edit/remove Tasks (PATCH/DELETE /api/tasks/{id}). Ran the targeted test module /app/backend/tests/test_tasks_edit_delete.py (23 tests) covering the full permission matrix. Result: 23/23 PASS in parallel and 23/23 PASS in serial (-n 0). No fixes were required; server.py:461-504 already implements the spec exactly.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_tasks_edit_delete.py",
+    "/app/test_reports/pytest/pytest_tasks_iter12.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py:461-485 PATCH /api/tasks/{id}: fetches cur under cscope(user) → returns 404 for missing id and cross-committee id. Body is filtered against a whitelist {title,description,priority,status,due_at,assignee_id,assignee_name,photo_url}; unknown fields drop out and empty result raises 400 'No valid fields'. Perfect match with events/announcements pattern.",
+    "server.py:471-477 status-only detection uses `set(body.keys()) == {\"status\"}` — precise; verified any committee member can toggle status but a body of {status, title} triggers the officer/author/assignee gate and returns 403 for 'other'. Guardrail confirmed by TestTaskStatusOnly::test_status_plus_title_by_other_forbidden.",
+    "server.py:473-476 permission gate mirrors events/announcements: officer (President/VP/Secretary) OR author (created_by/created_by_name match) OR assignee (assignee_id == user_id). Note author check also uses created_by_name equality — reasonable fallback for legacy rows but potentially fragile if two members share the same display name (very low risk in a committee app).",
+    "server.py:494-504 DELETE /api/tasks/{id}: same cscope 404 pattern, then officer-or-author only (assignee explicitly denied). Verified via TestTaskDelete::test_assignee_cannot_delete (assignee returns 403).",
+    "history/comments preservation: PATCH pushes {action:'updated', changes:[...]} into history and only $sets the whitelisted keys — no risk of clobbering created_by/created_at/committee_id.",
+    "cscope(user) is applied to both the find_one() pre-check AND the update_one/delete_one queries, so committee isolation is enforced at the DB layer, not just in Python — cross-committee attempts always 404, never partial success."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "23/23 (100%) — both serial and parallel",
+    "frontend": "not tested (backend-only request)"
+  },
+  "seed_data_creation": "Reused existing module-scoped fixtures in test_tasks_edit_delete.py: two ephemeral committees 'TEST TSK A' and 'TEST TSK B', with 6 users in A (President, VP, Secretary, Author=Regular Member, Assignee=Volunteer, Other=Regular Member) and 1 President in B. All test data prefixed with TEST_ and cleaned up on module teardown. No pollution of TESTCO or other test suites.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Tasks edit/delete permission matrix is fully verified. Per main-agent instruction, full 123-test suite was NOT re-run (previous iteration already green in serial). The known pre-existing parallel flake in test_donations_expenses_v4.py and test_delete_donations_expenses.py (documented in iteration_11.json) is unchanged and unrelated. Frontend (tasks.tsx bottom-sheet edit + double-tap-to-confirm delete) was NOT tested per the 'backend only' scope.",
+  "rca_of_issue": "N/A — no failures. Implementation in server.py:461-504 was already correct at first run."
+}

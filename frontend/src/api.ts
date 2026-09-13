@@ -89,9 +89,19 @@ export const api = {
 
   announcements: () => request("/announcements"),
   createAnnouncement: (a: any) => request("/announcements", { method: "POST", body: JSON.stringify(a) }),
+  editAnnouncement: (id: string, a: any) => request(`/announcements/${id}`, { method: "PATCH", body: JSON.stringify(a) }),
+  deleteAnnouncement: (id: string) => request(`/announcements/${id}`, { method: "DELETE" }),
+
+  notifications: () => request("/notifications"),
+  unreadCount: () => request("/notifications/unread-count"),
+  markRead: (ids?: string[]) => request("/notifications/mark-read", {
+    method: "POST", body: JSON.stringify(ids ? { ids } : { all: true }),
+  }),
 
   events: () => request("/events"),
   createEvent: (e: any) => request("/events", { method: "POST", body: JSON.stringify(e) }),
+  editEvent: (id: string, e: any) => request(`/events/${id}`, { method: "PATCH", body: JSON.stringify(e) }),
+  deleteEvent: (id: string) => request(`/events/${id}`, { method: "DELETE" }),
 
   // Committee endpoints
   myCommittee: () => request("/committees/me"),

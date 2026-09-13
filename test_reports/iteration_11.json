@@ -1,0 +1,48 @@
+{
+  "summary": "Backend verification for edit/remove events + announcements and in-app notifications. Added /app/backend/tests/test_events_announcements_notifications.py with 24 new tests. Full suite: 123/123 PASS in serial (-n 0). New tests: 24/24 always PASS in isolation and in parallel. Regression (prior 99 tests): all pass. Coverage: PATCH/DELETE /api/events (author or President/VP/Secretary; 403 for other Regular Member; 404 on missing id; 400 on empty body; RSVP cascade on delete verified via Mongo count), PATCH/DELETE /api/announcements (same access rules), notification emission on create donation/expense/event/announcement (each inserts one doc into 'notifications' with correct kind, committee_id and by_name), GET /api/notifications returns {items,unread} newest-first with required fields (kind,title,body,tint,by_name,created_at,is_read), GET /api/notifications/unread-count matches list.unread, POST /api/notifications/mark-read {all:true} sets unread=0 for caller only (verified another user in same committee still has unread>=1), committee isolation (User in committee B does NOT see committee A's notifications).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "test suite - parallel scheduling",
+        "issue": "Pre-existing parallel flake in test_donations_expenses_v4::TestDashboard::test_dashboard_uses_paid_amount, TestBackwardCompat::test_legacy_donation_treated_as_paid, and test_delete_donations_expenses::TestDashboardAfterExpenseDelete::test_total_expenses_and_balance_restore. Confirmed independent of new tests (fails 2/3 times even when --ignore my new file). These tests snapshot a baseline dashboard for the shared TESTCO president then assert an exact delta, but other TESTCO president tests run concurrently in a separate xdist worker and add donations/expenses inside the same committee. Serial run (-n 0) is always green (123/123). Fix suggestion: give these three tests their own committee/president fixture (not TESTCO) OR mark them with xdist_group so they don't interleave with other TESTCO writers."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_events_announcements_notifications.py",
+    "/app/test_reports/pytest/pytest_events_ann_ntf.xml",
+    "/app/test_reports/pytest/pytest_full_iter11.xml"
+  ],
+  "action_items": [
+    "(Optional/pre-existing) Fix the 3 flaky dashboard-baseline tests in test_donations_expenses_v4.py + test_delete_donations_expenses.py so they don't share TESTCO president with other parallel writers. Suggested: create per-test ephemeral committee & president fixture, or add pytest.mark.xdist_group('testco_dashboard') on them so they serialize."
+  ],
+  "critical_code_review_comments": [
+    "server.py:265-285 emit_notification correctly stamps committee_id, kind, by_id/by_name, created_at, tint and initializes read_by=[]. Called from create_donation (line 565), create_expense (662), create_announcement (710), create_event (758). All four kinds verified.",
+    "server.py:716-742 PATCH/DELETE announcements permission is 'is_officer OR is_author' where officer = President/Vice President/Secretary. Matches spec.",
+    "server.py:764-792 PATCH/DELETE events use same permission logic. DELETE cascades db.rsvps.delete_many with cscope filter. Cascade verified via mongo count in test_delete_author_ok_and_cascade_rsvps.",
+    "server.py:773-775 PATCH events returns 400 'no_changes' when body has no non-None field. Verified via test_patch_empty_body_returns_400.",
+    "server.py:1221-1235 GET /api/notifications computes is_read per caller (uid in read_by), pops read_by from response, and returns unread count consistent with items - correct per-user semantics.",
+    "server.py:1247-1253 mark-read uses $addToSet on read_by so each user tracks their own read state; scoped by cscope so a caller can only affect their committee's notifications. Verified: 'other' marking all read leaves 'author' unread>=1.",
+    "Minor nit: emit_notification failures are logged as warnings and swallowed (server.py:281-284). If notification insert ever fails, the parent create_* still succeeds silently. Acceptable design choice; consider surfacing a metric.",
+    "server.py:172-183 EventEdit and AnnouncementEdit Pydantic models only accept whitelisted fields (all Optional). Empty body -> body.dict() has all Nones -> update dict is empty -> 400. Good."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_events_announcements_notifications.py (new - 24 tests, ~260 lines)"
+  ],
+  "success_rate": {
+    "backend": "New tests 24/24 (100%). Full suite 123/123 (100%) in serial. In parallel: 120-123/123 due to pre-existing dashboard race (not caused by these changes).",
+    "frontend": "not tested (backend-only request)"
+  },
+  "seed_data_creation": "New module creates two ephemeral committees ('TEST NTF A' and 'TEST NTF B') and four bare users (President + 2 Regular Members in A, 1 President in B) via module-scoped fixtures. Cleanup on teardown removes users, user_sessions, notifications, donations, expenses, events, announcements, rsvps, and the committee docs. No pollution of TESTCO. TEST_-prefixed emails.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "1) All new endpoints (PATCH/DELETE events + announcements, GET/POST notifications) are verified end-to-end with permission gates, 404/400 edge cases, RSVP cascade, and cross-committee isolation. 2) Notifications collection is committee-scoped and per-user read tracking uses read_by array with $addToSet - verified two users in same committee have independent unread counts. 3) Pre-existing flake in 3 dashboard tests should be addressed by isolating their committee (not fixing here since main agent didn't ask; documented under backend_issues.minor). 4) Full serial run always green: pytest /app/backend/tests/ -n 0 => 123/123. 5) New test module works with existing conftest fixtures but doesn't rely on the TESTCO president; it creates fresh committees so it's insulated from other tests.",
+  "rca_of_issue": "None for the new functionality — all 24 new tests pass first try. The 3 pre-existing flaky tests in test_donations_expenses_v4.py and test_delete_donations_expenses.py fail intermittently in parallel because they read a dashboard baseline then assert an exact delta while other tests in a different xdist worker concurrently insert donations/expenses into the same TESTCO committee via the shared 'president' fixture. RCA: shared session-scoped president fixture across worker groups + no per-committee isolation for dashboard-delta tests. Mitigation: run tests serially, or give these three tests their own committee."
+}

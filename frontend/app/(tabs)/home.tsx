@@ -145,9 +145,12 @@ export default function Home() {
               <Text style={styles.who}>{user?.name?.split(" ")[0] || "Sevak"}</Text>
               <Text style={styles.role}>{roleView}</Text>
             </View>
-            <Pressable onPress={signOut} style={styles.logout} testID="logout-button">
-              <Text style={styles.logoutText}>Sign out</Text>
-            </Pressable>
+            <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+              <BellButton />
+              <Pressable onPress={signOut} style={styles.logout} testID="logout-button">
+                <Text style={styles.logoutText}>Sign out</Text>
+              </Pressable>
+            </View>
           </View>
 
           <View style={{ paddingBottom: spacing.xl }}>
@@ -318,6 +321,29 @@ function CDBlock({ v, label }: { v: number; label: string }) {
     </View>
   );
 }
+
+function BellButton() {
+  const router = useRouter();
+  const { data } = useQuery({ queryKey: ["unreadCount"], queryFn: api.unreadCount });
+  const n = data?.unread || 0;
+  return (
+    <Pressable onPress={() => router.push("/module/notifications")} style={bellStyles.btn} testID="bell-button">
+      <Text style={bellStyles.icon}>🔔</Text>
+      {n > 0 ? (
+        <View style={bellStyles.badge}>
+          <Text style={bellStyles.badgeText}>{n > 99 ? "99+" : n}</Text>
+        </View>
+      ) : null}
+    </Pressable>
+  );
+}
+
+const bellStyles = StyleSheet.create({
+  btn: { width: 42, height: 42, borderRadius: 21, backgroundColor: "rgba(255,255,255,0.15)", alignItems: "center", justifyContent: "center" },
+  icon: { fontSize: 18 },
+  badge: { position: "absolute", top: -2, right: -2, minWidth: 20, height: 20, paddingHorizontal: 5, borderRadius: 10, backgroundColor: colors.error, alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: "#2B221E" },
+  badgeText: { color: colors.onError, fontSize: 10, fontWeight: "800" },
+});
 
 function StatCard({ label, value, tone, testID }: any) {
   const tones: Record<string, { bg: string; fg: string }> = {

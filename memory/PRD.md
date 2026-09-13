@@ -15,7 +15,7 @@ President, Vice President, Secretary, Joint Secretary, Treasurer, Pooja Coordina
 
 ## Tabs (4)
 1. **Home** — Ganesha hero + countdown + stat grid (collected/spent/balance/volunteers) + pending/critical mini-cards + quick actions rail + today's events + recent announcements
-2. **Tasks** — chip filter (All/To do/Doing/Done), scope toggle (Mine/All), oversized cards with priority pill, one-tap complete with haptic, add via bottom sheet
+2. **Tasks** — chip filter (All/To do/Doing/Done), scope toggle (Mine/All), oversized cards with priority pill, one-tap complete with haptic, add/edit/delete via bottom sheet. Edit allowed for officer/author/assignee; delete for officer/author only (status toggle open to all committee members)
 3. **Community** — segmented Events / Members. Presidents/VPs/Secretaries can reassign any member's role.
 4. **More** — profile card + 3-col tile grid (Donations, Expenses, Seva AI, Announcements, Shifts, Profile) + sign out
 
