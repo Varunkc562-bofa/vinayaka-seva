@@ -127,11 +127,27 @@ class TaskComment(BaseModel):
 
 class DonationIn(BaseModel):
     donor_name: str
-    amount: float
-    mode: str = "cash"  # cash, upi, bank
+    amount: float                # pledged amount
+    paid_amount: Optional[float] = None  # actual paid (defaults to amount if None)
+    mode: str = "cash"
     note: Optional[str] = ""
     phone: Optional[str] = None
     send_sms: bool = True
+
+class DonationEdit(BaseModel):
+    donor_name: Optional[str] = None
+    amount: Optional[float] = None
+    paid_amount: Optional[float] = None
+    mode: Optional[str] = None
+    note: Optional[str] = None
+    phone: Optional[str] = None
+
+class ExpenseEdit(BaseModel):
+    amount: Optional[float] = None
+    category: Optional[str] = None
+    vendor: Optional[str] = None
+    bill_url: Optional[str] = None
+    description: Optional[str] = None
 
 class SmsConfigIn(BaseModel):
     enabled: bool = False
@@ -415,19 +431,51 @@ async def list_donations(user: dict = Depends(get_current_user)):
 
 @api.post("/donations")
 async def create_donation(body: DonationIn, user: dict = Depends(get_current_user)):
-    from fastapi import BackgroundTasks
     d = body.dict()
     send_sms = d.pop("send_sms", True)
+    # paid_amount defaults to full amount (i.e. complete)
+    if d.get("paid_amount") is None:
+        d["paid_amount"] = float(d.get("amount") or 0)
+    d["paid_amount"] = max(0.0, min(float(d["paid_amount"]), float(d["amount"])))
     d["donation_id"] = uid("don")
     d["created_at"] = now_utc()
     d["created_by"] = user["name"]
     await db.donations.insert_one(d)
     resp = clean({**d})
     if send_sms and d.get("phone"):
-        # Fire-and-forget; using threadpool via run_in_threadpool for the blocking requests call
         import asyncio
         asyncio.get_event_loop().run_in_executor(None, _send_sms_background, {**d, "created_at": d["created_at"].isoformat()})
     return resp
+
+@api.patch("/donations/{donation_id}")
+async def edit_donation(donation_id: str, body: DonationEdit, user: dict = Depends(get_current_user)):
+    cur = await db.donations.find_one({"donation_id": donation_id}, {"_id": 0})
+    if not cur:
+        raise HTTPException(404, "not_found")
+    update = {k: v for k, v in body.dict().items() if v is not None}
+    if not update:
+        raise HTTPException(400, "no_changes")
+    # Guard paid_amount within [0, amount]
+    new_amount = float(update.get("amount", cur.get("amount", 0)))
+    new_paid = float(update.get("paid_amount", cur.get("paid_amount", new_amount)))
+    new_paid = max(0.0, min(new_paid, new_amount))
+    update["amount"] = new_amount
+    update["paid_amount"] = new_paid
+    update["updated_at"] = now_utc()
+    await db.donations.update_one({"donation_id": donation_id}, {"$set": update})
+    return clean(await db.donations.find_one({"donation_id": donation_id}, {"_id": 0}))
+
+@api.get("/pending-dues")
+async def pending_dues(user: dict = Depends(get_current_user)):
+    items = await db.donations.find({}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    out = []
+    for d in items:
+        amt = float(d.get("amount") or 0)
+        paid = float(d.get("paid_amount", amt))
+        remaining = amt - paid
+        if remaining > 0.01:
+            out.append({**clean(d), "remaining": remaining, "paid_amount": paid, "amount": amt})
+    return out
 
 # ---------- SMS Config ----------
 @api.get("/config/sms")
@@ -486,6 +534,18 @@ async def approve_expense(expense_id: str,
     await db.expenses.update_one({"expense_id": expense_id},
         {"$set": {"approved": True, "approved_by": user["name"], "approved_at": now_utc()}})
     return {"ok": True}
+
+@api.patch("/expenses/{expense_id}")
+async def edit_expense(expense_id: str, body: ExpenseEdit, user: dict = Depends(get_current_user)):
+    cur = await db.expenses.find_one({"expense_id": expense_id}, {"_id": 0})
+    if not cur:
+        raise HTTPException(404, "not_found")
+    update = {k: v for k, v in body.dict().items() if v is not None}
+    if not update:
+        raise HTTPException(400, "no_changes")
+    update["updated_at"] = now_utc()
+    await db.expenses.update_one({"expense_id": expense_id}, {"$set": update})
+    return clean(await db.expenses.find_one({"expense_id": expense_id}, {"_id": 0}))
 
 # ---------- Announcements ----------
 @api.get("/announcements")
@@ -579,7 +639,18 @@ async def dashboard(user: dict = Depends(get_current_user)):
     events = await db.events.find({}, {"_id": 0}).sort("starts_at", 1).to_list(50)
     announcements = await db.announcements.find({}, {"_id": 0}).sort("created_at", -1).to_list(5)
     volunteers = await db.users.count_documents({"role": {"$in": ["Volunteer", "Volunteer Coordinator"]}})
-    total_donations = sum(d.get("amount", 0) for d in donations)
+    # Collected = paid amounts only. Pending dues = pledged - paid.
+    total_donations = 0.0
+    pending_dues_total = 0.0
+    pending_dues_count = 0
+    for d in donations:
+        amt = float(d.get("amount") or 0)
+        paid = float(d.get("paid_amount", amt))
+        total_donations += paid
+        rem = amt - paid
+        if rem > 0.01:
+            pending_dues_total += rem
+            pending_dues_count += 1
     total_expenses = sum(e.get("amount", 0) for e in expenses)
     pending_tasks = [t for t in tasks if t.get("status") != "done"]
     my_tasks = [t for t in tasks if t.get("assignee_id") == user["user_id"] and t.get("status") != "done"]
@@ -593,6 +664,8 @@ async def dashboard(user: dict = Depends(get_current_user)):
         "total_donations": total_donations,
         "total_expenses": total_expenses,
         "balance": total_donations - total_expenses,
+        "pending_dues_total": pending_dues_total,
+        "pending_dues_count": pending_dues_count,
         "active_volunteers": volunteers,
         "pending_tasks_count": len(pending_tasks),
         "my_pending_tasks_count": len(my_tasks),

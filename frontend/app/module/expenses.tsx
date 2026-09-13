@@ -18,6 +18,7 @@ export default function Expenses() {
   const router = useRouter();
   const { user } = useAuth();
   const [show, setShow] = useState(false);
+  const [editing, setEditing] = useState<any>(null);
   const [amt, setAmt] = useState(""); const [cat, setCat] = useState("decoration");
   const [vendor, setVendor] = useState(""); const [desc, setDesc] = useState("");
   const [billPath, setBillPath] = useState<string | null>(null);
@@ -27,9 +28,21 @@ export default function Expenses() {
   const total = useMemo(() => data.reduce((s: number, e: any) => s + (e.amount || 0), 0), [data]);
   const canApprove = ["President", "Treasurer", "Vice President"].includes(user?.role || "");
 
+  const resetForm = () => { setEditing(null); setAmt(""); setVendor(""); setDesc(""); setBillPath(null); setCat("decoration"); };
+  const openNew = () => { resetForm(); setShow(true); };
+  const openEdit = (e: any) => {
+    setEditing(e); setAmt(String(e.amount || "")); setCat(e.category || "decoration");
+    setVendor(e.vendor || ""); setDesc(e.description || ""); setBillPath(e.bill_url || null);
+    setShow(true);
+  };
+
   const createM = useMutation({
     mutationFn: (d: any) => api.createExpense(d),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["expenses"] }); qc.invalidateQueries({ queryKey: ["dashboard"] }); setShow(false); setAmt(""); setVendor(""); setDesc(""); setBillPath(null); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["expenses"] }); qc.invalidateQueries({ queryKey: ["dashboard"] }); setShow(false); resetForm(); },
+  });
+  const editM = useMutation({
+    mutationFn: ({ id, d }: any) => api.editExpense(id, d),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["expenses"] }); qc.invalidateQueries({ queryKey: ["dashboard"] }); setShow(false); resetForm(); },
   });
   const approveM = useMutation({
     mutationFn: (id: string) => api.approveExpense(id),
@@ -42,10 +55,16 @@ export default function Expenses() {
     finally { setUploading(false); }
   };
 
+  const save = () => {
+    const payload: any = { amount: parseFloat(amt) || 0, category: cat, vendor, description: desc, bill_url: billPath };
+    if (editing) editM.mutate({ id: editing.expense_id, d: payload });
+    else createM.mutate(payload);
+  };
+
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }} testID="expenses-screen">
       <ScreenHeader title="Expenses" subtitle="Track every rupee spent" back onBack={() => router.back()}
-        right={<Pressable onPress={() => setShow(true)} style={styles.addBtn} testID="new-expense-button"><Text style={styles.addTxt}>+</Text></Pressable>} />
+        right={<Pressable onPress={openNew} style={styles.addBtn} testID="new-expense-button"><Text style={styles.addTxt}>+</Text></Pressable>} />
       <ScrollView contentContainerStyle={{ padding: spacing.xl, paddingBottom: insets.bottom + spacing["3xl"] }}
         refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={colors.brandPrimary} />}>
         <View style={styles.hero}>
@@ -56,13 +75,13 @@ export default function Expenses() {
         {isLoading ? <ActivityIndicator color={colors.brandPrimary} /> :
          data.length === 0 ? <Empty title="No expenses yet" body="Tap + to add your first expense." testID="expenses-empty" /> :
          data.map((e: any) => (
-          <View key={e.expense_id} style={styles.card}>
+          <Pressable key={e.expense_id} onPress={() => openEdit(e)} style={styles.card} testID={`expense-row-${e.expense_id}`}>
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
               <View style={{ flex: 1 }}>
                 <View style={styles.catPill}><Text style={styles.catText}>{e.category}</Text></View>
                 <Text style={styles.vendor}>{e.vendor || "—"}</Text>
                 {e.description ? <Text style={styles.desc}>{e.description}</Text> : null}
-                <Text style={styles.meta}>By {e.created_by} · {e.approved ? "Approved" : "Pending"}</Text>
+                <Text style={styles.meta}>By {e.created_by} · {e.approved ? "Approved" : "Pending"} · Tap to edit</Text>
               </View>
               <Text style={styles.amt}>{fmtINR(e.amount)}</Text>
             </View>
@@ -70,14 +89,14 @@ export default function Expenses() {
               <AuthImage storagePath={e.bill_url} style={{ width: "100%", height: 160, borderRadius: radius.md, marginTop: spacing.sm }} contentFit="cover" />
             ) : null}
             {!e.approved && canApprove ? (
-              <Pressable onPress={() => approveM.mutate(e.expense_id)} style={styles.approveBtn} testID={`approve-${e.expense_id}`}>
+              <Pressable onPress={(ev) => { ev.stopPropagation?.(); approveM.mutate(e.expense_id); }} style={styles.approveBtn} testID={`approve-${e.expense_id}`}>
                 <Text style={styles.approveTxt}>Approve</Text>
               </Pressable>
             ) : null}
-          </View>
+          </Pressable>
         ))}
       </ScrollView>
-      <BottomSheet visible={show} onClose={() => setShow(false)} title="Add expense" testID="expense-sheet">
+      <BottomSheet visible={show} onClose={() => setShow(false)} title={editing ? "Edit expense" : "Add expense"} testID="expense-sheet">
         <Field label="Amount (₹)" value={amt} onChangeText={setAmt} keyboardType="numeric" placeholder="1500" />
         <Text style={{ fontSize: 12, color: colors.muted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6, fontWeight: "600" }}>Category</Text>
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginBottom: spacing.lg }}>
@@ -96,8 +115,8 @@ export default function Expenses() {
               {billPath ? "✓ Bill photo attached · tap to change" : "🧾 Attach bill photo (optional)"}
             </Text>}
         </Pressable>
-        <Button label={createM.isPending ? "Saving…" : "Save expense"} disabled={createM.isPending || !amt}
-          onPress={() => createM.mutate({ amount: parseFloat(amt) || 0, category: cat, vendor, description: desc, bill_url: billPath })} testID="save-expense-button" />
+        <Button label={(createM.isPending || editM.isPending) ? "Saving…" : (editing ? "Save changes" : "Save expense")} disabled={createM.isPending || editM.isPending || !amt}
+          onPress={save} testID="save-expense-button" />
       </BottomSheet>
     </View>
   );

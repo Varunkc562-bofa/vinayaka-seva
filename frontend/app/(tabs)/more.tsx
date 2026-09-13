@@ -8,6 +8,7 @@ import { ScreenHeader } from "@/src/ui";
 
 const MODULES = [
   { key: "donations", label: "Donations", symbol: "₹", route: "/module/donations", tint: "#E65100" },
+  { key: "pending-dues", label: "Pending Dues", symbol: "⏳", route: "/module/pending-dues", tint: "#F57F17" },
   { key: "expenses", label: "Expenses", symbol: "₹", route: "/module/expenses", tint: "#800000" },
   { key: "seva-ai", label: "Seva AI", symbol: "ॐ", route: "/module/seva-ai", tint: "#D4AF37" },
   { key: "announcements", label: "Announce", symbol: "📣", route: "/module/announcements", tint: "#F57F17" },

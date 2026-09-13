@@ -1,0 +1,35 @@
+{
+  "summary": "Backend-only regression + feature verification for donation/expense management improvements (v4). Authored /app/backend/tests/test_donations_expenses_v4.py with 15 focused tests covering: (1) POST /api/donations paid_amount defaults & clamping [-50→0, 1500→1000], (2) PATCH /api/donations/{id} — complete a partial, edit amount+paid, empty body → 400, missing id → 404, (3) GET /api/pending-dues — excludes fully paid, includes partial with 'remaining' field, (4) GET /api/dashboard — total_donations sums paid_amount (not pledged), pending_dues_total & pending_dues_count present and correct, balance = total_donations − total_expenses, (5) Backward compat: legacy donation inserted directly into Mongo (no paid_amount) is treated as fully paid — excluded from pending-dues and its full amount counted in total_donations, (6) PATCH /api/expenses/{id} — any authenticated user can edit amount/category/vendor/description, empty body → 400, missing id → 404, and PATCH /api/expenses/{id}/approve still gated to President/Treasurer/VP. All 15 new tests PASS. Full regression across all 4 test files (test_vinayaka_backend.py, test_vinayaka_v2.py, test_vinayaka_v3.py, test_donations_expenses_v4.py) = 80/80 PASSED in 10.92s. No backend issues, no red flags. Success rate 100%.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_donations_expenses_v4.py",
+    "/app/test_reports/pytest/pytest_v4_results.xml",
+    "/app/test_reports/pytest/pytest_all_v4_results.xml"
+  ],
+  "action_items": [
+    "None — all acceptance criteria for the donation/expense improvement PR are met and full regression is green.",
+    "Nit (not a bug, not blocking): PATCH /api/donations enforces the amount≥paid_amount invariant even when the caller only edits amount to a value below existing paid_amount (paid_amount silently clamps down). Confirm this is the intended behaviour when Treasurer 'corrects a pledge downward' — if not, consider rejecting with 400 in that case."
+  ],
+  "critical_code_review_comments": [
+    "Good: DonationIn.paid_amount is Optional; server clamps to [0, amount] both on POST and PATCH — implementation matches spec.",
+    "Good: Backward compatibility handled by `paid = float(d.get('paid_amount', amt))` in both /pending-dues and /dashboard — legacy rows without paid_amount are treated as fully paid without a data migration.",
+    "Good: /pending-dues uses `remaining > 0.01` tolerance to avoid float dust — solid.",
+    "Good: PATCH endpoints return the refreshed document (via find_one after $set), so client sees canonical clamped values.",
+    "Good: PATCH /api/expenses/{id} is intentionally unrestricted (any authenticated member) while /approve remains role-gated to President/Treasurer/VP — matches spec.",
+    "Minor: server.py is now ~1030 lines; consider splitting into routers/ per resource (donations.py, expenses.py, polls.py, etc.) for maintainability. Not blocking.",
+    "Minor: DonationIn.paid_amount uses Optional[float]=None, but the model doesn't validate amount≥0 — a negative pledged amount would clamp paid_amount to 0 but store a negative amount. Consider Pydantic Field(gt=0) on amount."
+  ],
+  "updated_files": ["/app/backend/tests/test_donations_expenses_v4.py"],
+  "success_rate": {"backend": "100% (80/80 tests, 15 new + 65 regression)", "frontend": "not tested (backend-only request)"},
+  "seed_data_creation": "None persisted. All test-created donations/expenses are cleaned up in each test (mongo_db.{donations,expenses}.delete_one at the end). One legacy donation is inserted directly into Mongo for the backward-compat test and deleted at end. Session users (President, Regular Member, Second Member) come from existing session-scoped fixtures in conftest.py and are torn down at session end.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Test infra pattern is stable: conftest.py provides `president_headers`, `member_headers`, `second_member_headers` fixtures that pre-insert users+user_sessions into Mongo — no OAuth roundtrip needed. Backend URL is read from EXPO_PUBLIC_BACKEND_URL or EXPO_BACKEND_URL. Reuse this pattern for future backend-only iterations. For donation/expense flows: paid_amount defaults to amount on POST when None; clamped to [0, amount]; the same invariant holds on PATCH (server recomputes new_paid = clamp(paid, 0, new_amount)). /pending-dues and /dashboard both fall back to `paid_amount = amount` for legacy rows missing the field. RBAC roles that can approve expenses = President/Treasurer/Vice President.",
+  "rca_of_issue": "No bugs found. Feature-verification task, not a bug hunt. All 10 acceptance criteria from the review_request are covered by dedicated tests and all pass. The clamping edge cases (negative paid, over-amount paid) and the backward-compat scenario for pre-existing donations were explicitly asserted."
+}

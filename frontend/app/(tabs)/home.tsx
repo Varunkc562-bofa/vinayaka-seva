@@ -16,6 +16,7 @@ const HERO = "https://images.unsplash.com/photo-1662031225146-42e30158e800?crop=
 const ALL_ACTIONS: { key: string; label: string; symbol: string; route: string }[] = [
   { key: "donation",  label: "Log donation",  symbol: "₹",  route: "/module/donations" },
   { key: "expense",   label: "Add expense",   symbol: "₹",  route: "/module/expenses" },
+  { key: "dues",      label: "Pending Dues",  symbol: "⏳", route: "/module/pending-dues" },
   { key: "task",      label: "New task",      symbol: "✓",  route: "/(tabs)/tasks" },
   { key: "ann",       label: "Announce",      symbol: "📣", route: "/module/announcements" },
   { key: "ai",        label: "Seva AI",       symbol: "ॐ",  route: "/module/seva-ai" },
@@ -202,6 +203,16 @@ export default function Home() {
               <MiniCard label="My tasks" value={data?.my_pending_tasks_count || 0} onPress={() => router.push("/(tabs)/tasks")} testID="mini-my-tasks" />
               <MiniCard label="Critical" value={data?.critical_issues_count || 0} tone="error" onPress={() => router.push("/(tabs)/tasks")} testID="mini-critical" />
             </View>
+            {(data?.pending_dues_count || 0) > 0 ? (
+              <Pressable onPress={() => router.push("/module/pending-dues")} style={styles.pendingDuesCard} testID="pending-dues-card">
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.pendingDuesLbl}>PENDING DUES · {data.pending_dues_count} donor{data.pending_dues_count === 1 ? "" : "s"}</Text>
+                  <Text style={styles.pendingDuesVal}>{fmtINR(data.pending_dues_total || 0)}</Text>
+                  <Text style={styles.pendingDuesNote}>Excluded from Collected & Balance</Text>
+                </View>
+                <Text style={styles.pendingDuesArrow}>→</Text>
+              </Pressable>
+            ) : null}
 
             {/* Quick actions rail */}
             <View style={styles.qaHeaderRow}>
@@ -421,4 +432,9 @@ const styles = StyleSheet.create({
   editCheck: { width: 24, height: 24, borderRadius: 6, borderWidth: 2, borderColor: colors.borderStrong, alignItems: "center", justifyContent: "center" },
   doneBtn: { marginTop: spacing.md, paddingVertical: 16, borderRadius: radius.pill, backgroundColor: colors.brandPrimary, alignItems: "center" },
   doneTxt: { color: colors.onBrand, fontSize: 15, fontWeight: "700" },
+  pendingDuesCard: { flexDirection: "row", alignItems: "center", backgroundColor: "#FFF3E0", borderRadius: radius.md, padding: spacing.md, borderWidth: 1, borderColor: colors.warning, marginTop: spacing.md },
+  pendingDuesLbl: { color: colors.warning, fontSize: 10, letterSpacing: 1, fontWeight: "700" },
+  pendingDuesVal: { color: colors.warning, fontFamily: fonts.display, fontSize: 24, fontWeight: "700", marginTop: 4 },
+  pendingDuesNote: { color: colors.onSurfaceTertiary, fontSize: 11, marginTop: 2, fontStyle: "italic" },
+  pendingDuesArrow: { color: colors.warning, fontSize: 24, fontWeight: "700" },
 });
