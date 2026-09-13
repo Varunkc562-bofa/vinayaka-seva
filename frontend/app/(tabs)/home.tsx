@@ -8,14 +8,16 @@ import { useRouter } from "expo-router";
 import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { storage } from "@/src/utils/storage";
+import { intents } from "@/src/intents";
 import { colors, fonts, radius, spacing } from "@/src/theme";
 
 const HERO = "https://images.unsplash.com/photo-1662031225146-42e30158e800?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NzB8MHwxfHNlYXJjaHwyfHxMb3JkJTIwR2FuZXNoYSUyMGlkb2wlMjBmZXN0aXZhbHxlbnwwfHx8fDE3ODkyODM4NjJ8MA&ixlib=rb-4.1.0&q=85";
 
 // All available quick actions the user can pick from.
-const ALL_ACTIONS: { key: string; label: string; symbol: string; route: string }[] = [
-  { key: "donation",  label: "Log donation",  symbol: "₹",  route: "/module/donations?open=new" },
-  { key: "expense",   label: "Add expense",   symbol: "₹",  route: "/module/expenses?open=new" },
+type QAItem = { key: string; label: string; symbol: string; route?: string; action?: () => void };
+const buildActions = (router: any): QAItem[] => [
+  { key: "donation",  label: "Log donation",  symbol: "₹",  action: () => { intents.set("new-donation"); router.push("/module/donations"); } },
+  { key: "expense",   label: "Add expense",   symbol: "₹",  action: () => { intents.set("new-expense"); router.push("/module/expenses"); } },
   { key: "dues",      label: "Pending Dues",  symbol: "⏳", route: "/module/pending-dues" },
   { key: "task",      label: "New task",      symbol: "✓",  route: "/(tabs)/tasks" },
   { key: "ann",       label: "Announce",      symbol: "📣", route: "/module/announcements" },
@@ -109,9 +111,10 @@ export default function Home() {
     persist(next);
   };
   const resetActions = () => persist(DEFAULT_KEYS);
+  const allActions = useMemo(() => buildActions(router), [router]);
   const selectedActions = useMemo(
-    () => selectedKeys.map(k => ALL_ACTIONS.find(a => a.key === k)).filter(Boolean) as typeof ALL_ACTIONS,
-    [selectedKeys]
+    () => selectedKeys.map(k => allActions.find(a => a.key === k)).filter(Boolean) as QAItem[],
+    [selectedKeys, allActions]
   );
 
   const roleView = user?.role || "Member";
@@ -229,7 +232,7 @@ export default function Home() {
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.md, paddingHorizontal: 2, paddingBottom: 4 }}>
                 {selectedActions.map(a => (
                   <QuickAction key={a.key} label={a.label} symbol={a.symbol}
-                    onPress={() => router.push(a.route as any)} testID={`qa-${a.key}`} />
+                    onPress={() => a.action ? a.action() : router.push(a.route as any)} testID={`qa-${a.key}`} />
                 ))}
               </ScrollView>
             )}
@@ -283,7 +286,7 @@ export default function Home() {
             </Pressable>
           </View>
           <ScrollView style={{ maxHeight: 460 }}>
-            {ALL_ACTIONS.map(a => {
+            {allActions.map(a => {
               const checked = selectedKeys.includes(a.key);
               return (
                 <Pressable key={a.key} onPress={() => toggleKey(a.key)} style={styles.editItem} testID={`qa-toggle-${a.key}`}>

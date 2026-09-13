@@ -1,12 +1,13 @@
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo, useCallback } from "react";
 import { View, Text, ScrollView, Pressable, StyleSheet, ActivityIndicator, RefreshControl } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRouter, useLocalSearchParams } from "expo-router";
+import { useRouter, useFocusEffect } from "expo-router";
 import { api } from "@/src/api";
 import { pickAndUploadImage } from "@/src/uploader";
 import { AuthImage } from "@/src/auth-image";
 import { useAuth } from "@/src/auth";
+import { intents } from "@/src/intents";
 import { colors, fonts, radius, spacing } from "@/src/theme";
 import { ScreenHeader, BottomSheet, Field, Button, Empty, fmtINR } from "@/src/ui";
 
@@ -16,7 +17,6 @@ export default function Expenses() {
   const insets = useSafeAreaInsets();
   const qc = useQueryClient();
   const router = useRouter();
-  const params = useLocalSearchParams<{ open?: string }>();
   const { user } = useAuth();
   const [show, setShow] = useState(false);
   const [editing, setEditing] = useState<any>(null);
@@ -56,14 +56,14 @@ export default function Expenses() {
     finally { setUploading(false); }
   };
 
-  // Auto-open the sheet when arrived via Quick Action ?open=new
-  useEffect(() => {
-    if (params.open === "new" && !show && !editing) {
-      openNew();
-      router.setParams({ open: undefined } as any);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params.open]);
+  // Auto-open the sheet when arrived via a Quick Action intent
+  useFocusEffect(
+    useCallback(() => {
+      if (intents.consume("new-expense")) {
+        openNew();
+      }
+    }, [])
+  );
 
   const save = () => {
     const payload: any = { amount: parseFloat(amt) || 0, category: cat, vendor, description: desc, bill_url: billPath };
