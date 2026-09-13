@@ -21,7 +21,7 @@ function Gate() {
     const inTabs = segments[0] === "(tabs)";
     const onLogin = segments[0] === "login";
     if (!user && !onLogin) router.replace("/login");
-    else if (user && !inTabs) router.replace("/(tabs)/home");
+    else if (user && onLogin) router.replace("/(tabs)/home");
   }, [user, loading, segments, router]);
 
   if (loading) {

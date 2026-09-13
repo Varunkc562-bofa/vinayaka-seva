@@ -14,8 +14,8 @@ const HERO = "https://images.unsplash.com/photo-1662031225146-42e30158e800?crop=
 
 // All available quick actions the user can pick from.
 const ALL_ACTIONS: { key: string; label: string; symbol: string; route: string }[] = [
-  { key: "donation",  label: "Log donation",  symbol: "₹",  route: "/module/donations" },
-  { key: "expense",   label: "Add expense",   symbol: "₹",  route: "/module/expenses" },
+  { key: "donation",  label: "Log donation",  symbol: "₹",  route: "/module/donations?open=new" },
+  { key: "expense",   label: "Add expense",   symbol: "₹",  route: "/module/expenses?open=new" },
   { key: "dues",      label: "Pending Dues",  symbol: "⏳", route: "/module/pending-dues" },
   { key: "task",      label: "New task",      symbol: "✓",  route: "/(tabs)/tasks" },
   { key: "ann",       label: "Announce",      symbol: "📣", route: "/module/announcements" },

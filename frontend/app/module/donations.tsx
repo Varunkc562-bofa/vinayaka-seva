@@ -1,8 +1,8 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { View, Text, ScrollView, Pressable, StyleSheet, ActivityIndicator, RefreshControl } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRouter } from "expo-router";
+import { useRouter, useLocalSearchParams } from "expo-router";
 import { api } from "@/src/api";
 import { colors, fonts, radius, spacing } from "@/src/theme";
 import { ScreenHeader, BottomSheet, Field, Button, Empty, fmtINR } from "@/src/ui";
@@ -13,10 +13,13 @@ export default function Donations() {
   const insets = useSafeAreaInsets();
   const qc = useQueryClient();
   const router = useRouter();
+  const params = useLocalSearchParams<{ open?: string }>();
   const [show, setShow] = useState(false);
   const [editing, setEditing] = useState<any>(null);
-  const [donor, setDonor] = useState(""); const [pledged, setPledged] = useState("");
-  const [paid, setPaid] = useState(""); const [mode, setMode] = useState("cash");
+  const [donor, setDonor] = useState(""); const [amount, setAmount] = useState("");
+  const [isPartial, setIsPartial] = useState(false);
+  const [paid, setPaid] = useState("");
+  const [mode, setMode] = useState("cash");
   const [note, setNote] = useState(""); const [phone, setPhone] = useState("");
   const [sendSms, setSendSms] = useState(true);
 
@@ -37,20 +40,32 @@ export default function Donations() {
   }, [donations]);
 
   const openNew = () => {
-    setEditing(null); setDonor(""); setPledged(""); setPaid(""); setMode("cash"); setNote(""); setPhone(""); setSendSms(true);
+    setEditing(null); setDonor(""); setAmount(""); setPaid(""); setIsPartial(false);
+    setMode("cash"); setNote(""); setPhone(""); setSendSms(true);
     setShow(true);
   };
   const openEdit = (d: any) => {
     setEditing(d);
     setDonor(d.donor_name || "");
-    setPledged(String(d.amount || ""));
-    setPaid(String(d.paid_amount ?? d.amount ?? ""));
+    setAmount(String(d.amount || ""));
+    const p = d.paid_amount ?? d.amount ?? 0;
+    setIsPartial(p < (d.amount || 0));
+    setPaid(String(p));
     setMode(d.mode || "cash");
     setNote(d.note || "");
     setPhone(d.phone || "");
     setSendSms(false);
     setShow(true);
   };
+
+  // Open the sheet automatically when arriving via Quick Action ?open=new
+  useEffect(() => {
+    if (params.open === "new" && !show && !editing) {
+      openNew();
+      router.setParams({ open: undefined } as any);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params.open]);
 
   const createM = useMutation({
     mutationFn: (d: any) => api.createDonation(d),
@@ -62,8 +77,8 @@ export default function Donations() {
   });
 
   const save = () => {
-    const amountVal = parseFloat(pledged) || 0;
-    const paidVal = paid === "" ? amountVal : (parseFloat(paid) || 0);
+    const amountVal = parseFloat(amount) || 0;
+    const paidVal = isPartial ? (parseFloat(paid) || 0) : amountVal;
     const payload: any = {
       donor_name: donor.trim(),
       amount: amountVal,
@@ -75,8 +90,8 @@ export default function Donations() {
     else createM.mutate({ ...payload, send_sms: sendSms });
   };
 
-  const disabled = !donor.trim() || !pledged || (createM.isPending || editM.isPending);
-  const remaining = Math.max(0, (parseFloat(pledged) || 0) - (paid === "" ? (parseFloat(pledged) || 0) : (parseFloat(paid) || 0)));
+  const disabled = !donor.trim() || !amount || (createM.isPending || editM.isPending);
+  const shortfall = isPartial ? Math.max(0, (parseFloat(amount) || 0) - (parseFloat(paid) || 0)) : 0;
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }} testID="donations-screen">
@@ -120,12 +135,23 @@ export default function Donations() {
       </ScrollView>
       <BottomSheet visible={show} onClose={() => setShow(false)} title={editing ? "Edit donation" : "Log a donation"} testID="donation-sheet">
         <Field label="Donor name" value={donor} onChangeText={setDonor} placeholder="Ramesh Kulkarni" />
-        <Field label="Pledged amount (₹)" value={pledged} onChangeText={setPledged} keyboardType="numeric" placeholder="1100" />
-        <Field label={`Paid amount (₹) · leave blank if fully paid`} value={paid} onChangeText={setPaid} keyboardType="numeric" placeholder={pledged || "0"} />
-        {remaining > 0 ? (
-          <View style={styles.dueBanner}>
-            <Text style={styles.dueBannerText}>⚠️ {fmtINR(remaining)} will be tracked as pending due</Text>
+        <Field label="Phone (optional, for SMS receipt)" value={phone} onChangeText={setPhone} keyboardType="phone-pad" placeholder="+919876543210" autoCapitalize="none" />
+        <Field label={isPartial ? "Total pledged (₹)" : "Amount given (₹)"} value={amount} onChangeText={setAmount} keyboardType="numeric" placeholder="1100" />
+        <Pressable onPress={() => { setIsPartial(!isPartial); if (!isPartial) setPaid(""); }} style={styles.partialToggle} testID="partial-toggle">
+          <View style={[styles.checkbox, isPartial && { backgroundColor: colors.brandPrimary, borderColor: colors.brandPrimary }]}>
+            {isPartial ? <Text style={{ color: colors.onBrand, fontWeight: "800" }}>✓</Text> : null}
           </View>
+          <Text style={{ color: colors.onSurface, fontWeight: "600", fontSize: 13 }}>This is a partial payment (add pending due)</Text>
+        </Pressable>
+        {isPartial ? (
+          <>
+            <Field label="Paid now (₹)" value={paid} onChangeText={setPaid} keyboardType="numeric" placeholder="0" />
+            {shortfall > 0 ? (
+              <View style={styles.dueBanner}>
+                <Text style={styles.dueBannerText}>⚠️ {fmtINR(shortfall)} will be tracked as pending due</Text>
+              </View>
+            ) : null}
+          </>
         ) : null}
         <Text style={styles.optLbl}>Mode</Text>
         <View style={{ flexDirection: "row", gap: spacing.sm, marginBottom: spacing.lg }}>
@@ -137,13 +163,12 @@ export default function Donations() {
           ))}
         </View>
         <Field label="Note (optional)" value={note} onChangeText={setNote} placeholder="Family donation" />
-        <Field label="Donor phone (for SMS receipt)" value={phone} onChangeText={setPhone} keyboardType="phone-pad" placeholder="+919876543210" autoCapitalize="none" />
         {!editing ? (
           <Pressable onPress={() => setSendSms(!sendSms)} style={{ flexDirection: "row", alignItems: "center", gap: 10, marginBottom: spacing.lg }} testID="send-sms-toggle">
-            <View style={{ width: 22, height: 22, borderRadius: 6, borderWidth: 2, borderColor: sendSms ? colors.brandPrimary : colors.borderStrong, backgroundColor: sendSms ? colors.brandPrimary : "transparent", alignItems: "center", justifyContent: "center" }}>
+            <View style={[styles.checkbox, sendSms && { backgroundColor: colors.brandPrimary, borderColor: colors.brandPrimary }]}>
               {sendSms ? <Text style={{ color: colors.onBrand, fontWeight: "800" }}>✓</Text> : null}
             </View>
-            <Text style={{ color: colors.onSurface, fontWeight: "600", fontSize: 14 }}>Send SMS thank-you to donor</Text>
+            <Text style={{ color: colors.onSurface, fontWeight: "600", fontSize: 13 }}>Send SMS thank-you (if phone given)</Text>
           </Pressable>
         ) : null}
         <Button label={(createM.isPending || editM.isPending) ? "Saving…" : (editing ? "Save changes" : "Save donation")} disabled={disabled} onPress={save} testID="save-donation-button" />
@@ -173,4 +198,6 @@ const styles = StyleSheet.create({
   optLbl: { fontSize: 12, color: colors.muted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6, fontWeight: "600" },
   dueBanner: { backgroundColor: "#FFF3E0", borderColor: colors.warning, borderWidth: 1, borderRadius: radius.md, padding: 10, marginBottom: spacing.md },
   dueBannerText: { color: colors.warning, fontSize: 12, fontWeight: "700" },
+  partialToggle: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: spacing.md },
+  checkbox: { width: 22, height: 22, borderRadius: 6, borderWidth: 2, borderColor: colors.borderStrong, alignItems: "center", justifyContent: "center" },
 });

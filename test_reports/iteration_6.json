@@ -1,0 +1,33 @@
+{
+  "summary": "Frontend UI testing BLOCKED by a critical navigation bug in /app/frontend/app/_layout.tsx (Gate). The auth-gate effect redirects any authenticated user who is NOT on a (tabs) route back to /(tabs)/home. This makes every /module/* screen — including /module/donations, /module/expenses, /module/pending-dues — completely unreachable on the web preview. Consequently, the entire donation/expense improvement PR (qa-donation → auto-open donation-sheet, qa-expense → auto-open expense-sheet, partial payment flow, editing rows, pending-dues drill-in) CANNOT be exercised via the deployed app. Direct navigation to https://festival-hub-46.preview.emergentagent.com/module/donations (with or without ?open=new) redirects to /home. Tapping the qa-donation quick action from Home also lands back on /home. Auth setup (President via Mongo user_sessions + localStorage vs_session_token) is verified working — /api/auth/me returns 200 with the seeded President user, and Home renders correctly with stat cards showing existing data (Collected ₹9,118, Spent ₹5,950). Backend regression was covered in iteration_5 (80/80 pytest). No new backend tests were run in this iteration since the request is frontend-only.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Any navigation to a /module/* screen (donations, expenses, pending-dues, etc.)",
+        "issue": "Gate effect in app/_layout.tsx force-redirects authenticated users to /(tabs)/home whenever segments[0] !== '(tabs)'. Since /module/* routes have segments[0] === 'module', they always get redirected away. Consequence: qa-donation, qa-expense, pending-dues-card, and every module route in the app is unreachable. Directly opening the URL /module/donations?open=new redirects to /home before the screen mounts, so the ?open=new auto-open behaviour cannot be verified.",
+        "affected_testIDs": ["qa-donation", "qa-expense", "donation-sheet", "expense-sheet", "donations-screen", "expenses-screen", "pending-dues-card", "new-donation-button", "save-donation-button", "save-expense-button", "partial-toggle"]
+      }
+    ],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [
+    "CRITICAL — Fix /app/frontend/app/_layout.tsx Gate. Line 24 currently reads `else if (user && !inTabs) router.replace('/(tabs)/home');` — this is wrong: it kicks the user out of every non-tabs route (including /module/*). Change the else-if to only redirect when the user is on the login screen, e.g. `else if (user && onLogin) router.replace('/(tabs)/home');` OR add `segments[0] === 'module' || segments[0] === '(tabs)' || onLogin` to the whitelist. After the fix, /module/donations, /module/expenses and /module/pending-dues become reachable and the whole PR (qa auto-open + partial + edit) can be verified end-to-end.",
+    "After the fix, re-run frontend testing to validate the 8 acceptance criteria in the review_request (qa-donation auto-open, simple donation flow, partial donation with pending dues, donation edit, qa-expense auto-open, simple expense flow, expense edit, and + header regression)."
+  ],
+  "critical_code_review_comments": [
+    "app/_layout.tsx Gate uses `segments[0] === '(tabs)'` as the only allowed area for authenticated users. This is too restrictive — it blocks the entire /module/* subtree that the app relies on. The auth guard should whitelist all authenticated routes (or better, only redirect off /login), not restrict to a single group.",
+    "This bug is a regression from the previous iteration (iteration_5 was backend-only and could not have caught it). Recommend adding a smoke Playwright test that navigates to /module/donations after login and asserts donations-screen is visible.",
+    "console warnings observed on web: `\"shadow*\" style props are deprecated. Use \"boxShadow\".` — non-blocking, but worth cleaning up."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "not tested (frontend-only request; see iteration_5 for 80/80 backend)", "frontend": "BLOCKED — 0/8 acceptance criteria verifiable due to navigation guard bug"},
+  "seed_data_creation": "Inserted one President test user + session directly into Mongo (users, user_sessions) with session_token=UITEST_tok_f1cc4c19446548edbda4bb5bf96e92ef; user_id=user_45f0c5acaaa8. This user has no donations/expenses of their own. Should be cleaned up manually or by the next iteration.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Auth bypass works: set localStorage 'vs_session_token' via Playwright context.add_init_script BEFORE first navigation. curl -H 'Authorization: Bearer <token>' /api/auth/me returns 200. After the _layout.tsx Gate is fixed, use the seeded token above (or re-seed via /app/backend/tests/conftest.py pattern) and re-run the frontend test flow. Read Collected/Spent delta from stat-donations / stat-expenses testIDs on Home. qa-donation and qa-expense buttons live off-screen — call scroll_into_view_if_needed() before tap. The ?open=new auto-open logic in donations.tsx and expenses.tsx uses useLocalSearchParams + useEffect and looks correct in code; it just never gets a chance to run because the screen is unmounted by the Gate redirect.",
+  "rca_of_issue": "RCA: /app/frontend/app/_layout.tsx:19-25 — the Gate effect has two branches. Branch A (`!user && !onLogin` → /login) is correct. Branch B (`user && !inTabs` → /(tabs)/home) is buggy: it treats ANY route outside the (tabs) group as an authenticated user landing in the wrong place, and force-redirects them to /home. But /module/* is a valid authenticated area of the app. Reproduction: (1) seed a President user + session in Mongo; (2) set localStorage vs_session_token; (3) navigate to /module/donations — observe URL is rewritten to /home and donations-screen never renders. Mitigation: change branch B to `user && onLogin` so the post-login redirect only fires from the login screen; other authenticated routes render normally. This single-line fix unblocks the entire donation/expense feature verification."
+}
