@@ -18,55 +18,39 @@ mongo_url = os.environ["MONGO_URL"]
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ["DB_NAME"]]
 
-EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 # ---------- Object Storage ----------
-STORAGE_BASE = (os.environ.get("INTEGRATION_PROXY_URL") or "").strip() or "https://integrations.emergentagent.com"
-STORAGE_URL = STORAGE_BASE.rstrip("/") + "/objstore/api/v1/storage"
 APP_NAME = "vinayaka-seva"
-_storage_key: Optional[str] = None
 
-def _init_storage() -> Optional[str]:
-    global _storage_key
-    if _storage_key:
-        return _storage_key
-    if not EMERGENT_LLM_KEY:
-        return None
-    try:
-        r = requests.post(f"{STORAGE_URL}/init", json={"emergent_key": EMERGENT_LLM_KEY}, timeout=30)
-        r.raise_for_status()
-        _storage_key = r.json()["storage_key"]
-    except Exception as e:
-        logging.getLogger("vinayaka").warning("storage init failed: %s", e)
-        _storage_key = None
-    return _storage_key
+def _firebase_app():
+    import firebase_admin
+    from firebase_admin import credentials
+
+    if firebase_admin._apps:
+        return firebase_admin.get_app()
+    service_account_json = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON")
+    options = {
+        "projectId": os.environ.get("FIREBASE_PROJECT_ID", "ganasetu"),
+        "storageBucket": os.environ.get("FIREBASE_STORAGE_BUCKET", "ganasetu.firebasestorage.app"),
+    }
+    if service_account_json:
+        return firebase_admin.initialize_app(credentials.Certificate(json.loads(service_account_json)), options)
+    return firebase_admin.initialize_app(options=options)
 
 def _put_object(path: str, data: bytes, content_type: str):
-    key = _init_storage()
-    if not key:
-        raise RuntimeError("storage_unavailable")
-    r = requests.put(f"{STORAGE_URL}/objects/{path}",
-        headers={"X-Storage-Key": key, "Content-Type": content_type}, data=data, timeout=120)
-    if r.status_code == 503:
-        # stale key: reset once, try again
-        globals()["_storage_key"] = None
-        key = _init_storage()
-        if not key:
-            raise RuntimeError("storage_unavailable")
-        r = requests.put(f"{STORAGE_URL}/objects/{path}",
-            headers={"X-Storage-Key": key, "Content-Type": content_type}, data=data, timeout=120)
-    r.raise_for_status()
-    return r.json()
+    from firebase_admin import storage
+    blob = storage.bucket(app=_firebase_app()).blob(path)
+    blob.upload_from_string(data, content_type=content_type)
+    return {"name": path}
 
 def _get_object(path: str):
-    key = _init_storage()
-    if not key:
-        raise RuntimeError("storage_unavailable")
-    r = requests.get(f"{STORAGE_URL}/objects/{path}",
-        headers={"X-Storage-Key": key}, timeout=60)
-    if r.status_code >= 400:
-        raise RuntimeError(f"storage_get_failed_{r.status_code}")
-    return r.content, r.headers.get("Content-Type", "application/octet-stream")
+    from firebase_admin import storage
+    blob = storage.bucket(app=_firebase_app()).blob(path)
+    if not blob.exists():
+        raise RuntimeError("not_found")
+    blob.reload()
+    return blob.download_as_bytes(), blob.content_type or "application/octet-stream"
 
 app = FastAPI(title="Vinayaka Seva API")
 api = APIRouter(prefix="/api")
@@ -103,8 +87,8 @@ ROLES = [
     "Media Coordinator", "General Committee Member", "Volunteer", "Regular Member",
 ]
 
-class SessionExchange(BaseModel):
-    session_id: str
+class FirebaseTokenIn(BaseModel):
+    id_token: str
 
 class UserOut(BaseModel):
     user_id: str
@@ -285,18 +269,20 @@ async def emit_notification(user: dict, kind: str, title: str, body: str,
     return doc
 
 # ---------- Auth ----------
-@api.post("/auth/session")
-async def auth_session(body: SessionExchange):
-    async with httpx.AsyncClient(timeout=15) as hx:
-        r = await hx.get(
-            "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data",
-            headers={"X-Session-ID": body.session_id},
-        )
-        if r.status_code != 200:
-            raise HTTPException(status_code=401, detail="Invalid session_id")
-        data = r.json()
+@api.post("/auth/firebase")
+async def auth_firebase(body: FirebaseTokenIn):
+    try:
+        from firebase_admin import auth as firebase_auth
 
-    email = data["email"]
+        _firebase_app()
+        data = firebase_auth.verify_id_token(body.id_token)
+    except Exception as exc:
+        logger.warning("Firebase token verification failed: %s", exc)
+        raise HTTPException(status_code=401, detail="Invalid Firebase token")
+
+    email = data.get("email")
+    if not email:
+        raise HTTPException(status_code=400, detail="Firebase account has no email")
     existing = await db.users.find_one({"email": email}, {"_id": 0})
     if existing:
         user_id = existing["user_id"]
@@ -304,16 +290,17 @@ async def auth_session(body: SessionExchange):
         user_id = uid("user")
         await db.users.insert_one({
             "user_id": user_id,
+            "firebase_uid": data.get("uid"),
             "email": email,
             "name": data.get("name") or email.split("@")[0],
             "picture": data.get("picture"),
             "role": "Regular Member",
-            "committee_id": None,   # user chooses/creates committee after login
+            "committee_id": None,
             "phone": None,
             "created_at": now_utc(),
         })
 
-    session_token = data["session_token"]
+    session_token = secrets.token_urlsafe(32)
     await db.user_sessions.insert_one({
         "session_token": session_token,
         "user_id": user_id,
@@ -578,6 +565,9 @@ async def create_donation(body: DonationIn, user: dict = Depends(get_user_with_c
     d["committee_id"] = user["committee_id"]
     d["created_at"] = now_utc()
     d["created_by"] = user["name"]
+    d["created_by_id"] = user["user_id"]
+    d["collected_by"] = user["name"]
+    d["collected_by_role"] = user.get("role") or ""
     await db.donations.insert_one(d)
     resp = clean({**d})
     await emit_notification(user, "donation",
@@ -841,11 +831,56 @@ async def rsvp_summary(user: dict = Depends(get_user_with_committee)):
         maybe = [r for r in rsvps if r.get("status") == "maybe"]
         no = [r for r in rsvps if r.get("status") == "no"]
         headcount = sum(1 + int(r.get("plus_ones") or 0) for r in yes)
+        def _serialize(rlist):
+            return [{"user_id": r.get("user_id"), "user_name": r.get("user_name"),
+                     "user_role": r.get("user_role"), "plus_ones": r.get("plus_ones", 0),
+                     "status": r.get("status")} for r in rlist]
         out.append({**clean(e), "yes": len(yes), "maybe": len(maybe), "no": len(no),
-                    "headcount": headcount, "yes_list": [
-                        {"user_name": r.get("user_name"), "user_role": r.get("user_role"),
-                         "plus_ones": r.get("plus_ones", 0)} for r in yes]})
+                    "headcount": headcount, "yes_list": _serialize(yes),
+                    "maybe_list": _serialize(maybe), "no_list": _serialize(no)})
     return out
+
+@api.patch("/events/{event_id}/rsvps/{target_user_id}")
+async def edit_rsvp(event_id: str, target_user_id: str, body: Dict[str, Any],
+                    user: dict = Depends(get_user_with_committee)):
+    # Officers can edit anyone; regular users can only edit their own.
+    is_officer = user.get("role") in ("President", "Vice President", "Secretary",
+                                       "Food Coordinator", "Volunteer Coordinator")
+    if target_user_id != user["user_id"] and not is_officer:
+        raise HTTPException(403, "not_allowed")
+    update: Dict[str, Any] = {}
+    if "status" in body and body["status"] in ("yes", "maybe", "no"):
+        update["status"] = body["status"]
+    if "plus_ones" in body:
+        try:
+            update["plus_ones"] = max(0, int(body["plus_ones"] or 0))
+        except Exception:
+            raise HTTPException(400, "bad_plus_ones")
+    if not update:
+        raise HTTPException(400, "no_changes")
+    update["at"] = now_utc()
+    update["edited_by"] = user["name"]
+    r = await db.rsvps.update_one(
+        {"event_id": event_id, "user_id": target_user_id, **cscope(user)},
+        {"$set": update},
+    )
+    if r.matched_count == 0:
+        raise HTTPException(404, "not_found")
+    return {"ok": True}
+
+@api.delete("/events/{event_id}/rsvps/{target_user_id}")
+async def delete_rsvp(event_id: str, target_user_id: str,
+                      user: dict = Depends(get_user_with_committee)):
+    is_officer = user.get("role") in ("President", "Vice President", "Secretary",
+                                       "Food Coordinator", "Volunteer Coordinator")
+    if target_user_id != user["user_id"] and not is_officer:
+        raise HTTPException(403, "not_allowed")
+    r = await db.rsvps.delete_one(
+        {"event_id": event_id, "user_id": target_user_id, **cscope(user)},
+    )
+    if r.deleted_count == 0:
+        raise HTTPException(404, "not_found")
+    return {"ok": True}
 
 # ---------- Volunteer shifts ----------
 @api.get("/shifts")
@@ -937,9 +972,8 @@ async def build_context(user: dict) -> str:
 
 @api.post("/ai/chat")
 async def ai_chat(body: AIChatIn, user: dict = Depends(get_user_with_committee)):
-    if not EMERGENT_LLM_KEY:
+    if not GEMINI_API_KEY:
         raise HTTPException(500, "AI not configured")
-    from emergentintegrations.llm.chat import LlmChat, UserMessage, TextDelta, StreamDone
 
     context = await build_context(user)
     session_id = body.session_id or uid("ai")
@@ -950,9 +984,6 @@ async def ai_chat(body: AIChatIn, user: dict = Depends(get_user_with_committee))
         "the answer, say so gently and suggest what to add. Never reveal raw JSON.\n\n"
         f"COMMITTEE DATA:\n{context}"
     )
-    chat = LlmChat(api_key=EMERGENT_LLM_KEY, session_id=session_id,
-                   system_message=system).with_model("gemini", "gemini-3-flash-preview")
-
     # Save user question
     await db.ai_messages.insert_one({
         "session_id": session_id, "user_id": user["user_id"],
@@ -962,12 +993,26 @@ async def ai_chat(body: AIChatIn, user: dict = Depends(get_user_with_committee))
     async def gen():
         buf = ""
         try:
-            async for ev in chat.stream_message(UserMessage(text=body.question)):
-                if isinstance(ev, TextDelta):
-                    buf += ev.content
-                    yield f"data: {json.dumps({'delta': ev.content})}\n\n"
-                elif isinstance(ev, StreamDone):
-                    break
+            url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent"
+            payload = {
+                "systemInstruction": {"parts": [{"text": system}]},
+                "contents": [{"role": "user", "parts": [{"text": body.question}]}],
+            }
+            async with httpx.AsyncClient(timeout=None) as hx:
+                async with hx.stream("POST", url, params={"alt": "sse", "key": GEMINI_API_KEY}, json=payload) as response:
+                    if response.status_code != 200:
+                        detail = (await response.aread()).decode("utf-8", errors="replace")
+                        raise RuntimeError(f"Gemini returned HTTP {response.status_code}: {detail[:300]}")
+                    async for line in response.aiter_lines():
+                        if not line.startswith("data: "):
+                            continue
+                        event = json.loads(line[6:])
+                        for candidate in event.get("candidates", []):
+                            for part in candidate.get("content", {}).get("parts", []):
+                                text = part.get("text", "")
+                                if text:
+                                    buf += text
+                                    yield f"data: {json.dumps({'delta': text})}\n\n"
         except Exception as ex:
             logger.exception("AI error")
             yield f"data: {json.dumps({'error': str(ex)})}\n\n"
