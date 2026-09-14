@@ -27,20 +27,24 @@ export default function TabsLayout() {
         // sizes the bar as 49 + safe-area bottom on its own. Only give web
         // a plain number height because there's no auto safe-area on web.
         tabBarStyle: {
-          backgroundColor: colors.surfaceSecondary,
+          backgroundColor: colors.surface,
           borderTopColor: colors.border,
           borderTopWidth: 1,
+          shadowColor: colors.surfaceInverse,
+          shadowOpacity: 0.08,
+          shadowRadius: 12,
+          elevation: 8,
           ...(Platform.OS === "web" ? { height: 64 } : {}),
         },
         tabBarItemStyle: { alignSelf: "center" },
       }}
     >
       <Tabs.Screen name="home" options={{ tabBarLabel: "Home",
-        tabBarIcon: ({ focused }) => <TabIcon focused={focused} glyph="◉" /> }} />
+          tabBarIcon: ({ focused }) => <TabIcon focused={focused} glyph="ॐ" /> }} />
       <Tabs.Screen name="tasks" options={{ tabBarLabel: "Tasks",
-        tabBarIcon: ({ focused }) => <TabIcon focused={focused} glyph="✓" /> }} />
+          tabBarIcon: ({ focused }) => <TabIcon focused={focused} glyph="✦" /> }} />
       <Tabs.Screen name="community" options={{ tabBarLabel: "Community",
-        tabBarIcon: ({ focused }) => <TabIcon focused={focused} glyph="✦" /> }} />
+          tabBarIcon: ({ focused }) => <TabIcon focused={focused} glyph="⌂" /> }} />
       <Tabs.Screen name="more" options={{ tabBarLabel: "More",
         tabBarIcon: ({ focused }) => <TabIcon focused={focused} glyph="≡" /> }} />
     </Tabs>

@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: ganasetu-api
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/
+    envVars:
+      - key: MONGO_URL
+        sync: false
+      - key: DB_NAME
+        value: ganasetu
+      - key: FIREBASE_PROJECT_ID
+        value: ganasetu
+      - key: FIREBASE_STORAGE_BUCKET
+        value: ganasetu.firebasestorage.app
+      - key: FIREBASE_SERVICE_ACCOUNT_JSON
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        value: "*"

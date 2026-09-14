@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { View, Text, ScrollView, StyleSheet, ActivityIndicator, Pressable, RefreshControl } from "react-native";
+import { View, Text, ScrollView, StyleSheet, ActivityIndicator, Pressable, RefreshControl, Alert } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
@@ -7,6 +7,8 @@ import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { colors, fonts, radius, spacing } from "@/src/theme";
 import { ScreenHeader, Empty } from "@/src/ui";
+
+const OFFICERS = ["President", "Vice President", "Secretary", "Food Coordinator", "Volunteer Coordinator"];
 
 function fmtDate(iso: string) {
   try { return new Date(iso).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); } catch { return iso; }
@@ -26,34 +28,53 @@ export default function Prasadam() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["rsvpSummary"] }),
   });
 
+  const editRsvpM = useMutation({
+    mutationFn: ({ eid, uid, data }: any) => api.editRsvp(eid, uid, data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["rsvpSummary"] }),
+  });
+
+  const removeRsvpM = useMutation({
+    mutationFn: ({ eid, uid }: any) => api.removeRsvp(eid, uid),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["rsvpSummary"] }),
+  });
+
+  const isOfficer = OFFICERS.includes(user?.role || "");
+
   const annadanam = data.filter((e: any) => e.category === "annadanam");
   const others = data.filter((e: any) => e.category !== "annadanam");
 
+  const commonRow = (e: any) => (
+    <EventRow key={e.event_id} e={e} user={user}
+      isOfficer={isOfficer}
+      expanded={expanded === e.event_id}
+      onToggle={() => setExpanded(expanded === e.event_id ? null : e.event_id)}
+      plusOnes={plus[e.event_id] || 0}
+      setPlus={(n) => setPlus({ ...plus, [e.event_id]: n })}
+      onRsvp={(status) => rsvpM.mutate({ id: e.event_id, status, plus_ones: plus[e.event_id] || 0 })}
+      onAdjustPlus={(uid: string, next: number) =>
+        editRsvpM.mutate({ eid: e.event_id, uid, data: { plus_ones: next } })}
+      onRemove={(uid: string, name: string) => {
+        Alert.alert("Remove RSVP", `Remove ${name} from this roster?`,
+          [{ text: "Cancel", style: "cancel" },
+           { text: "Remove", style: "destructive", onPress: () => removeRsvpM.mutate({ eid: e.event_id, uid }) }]);
+      }} />
+  );
+
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }} testID="prasadam-screen">
-      <ScreenHeader title="Prasadam Roster" subtitle="Headcount for every seva" back onBack={() => router.back()} />
+      <ScreenHeader title="Prasadam Roster" subtitle={isOfficer ? "Tap ✎ to adjust plus-ones · ✕ to remove" : "Headcount for every seva"} back onBack={() => router.back()} />
       <ScrollView contentContainerStyle={{ padding: spacing.xl, paddingBottom: insets.bottom + spacing["3xl"] }}
         refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={colors.brandPrimary} />}>
         {isLoading ? <ActivityIndicator color={colors.brandPrimary} /> : (
           <>
             <Text style={styles.section}>🍚 Annadanam</Text>
             {annadanam.length === 0 ? <Empty title="No annadanam yet" body="Add an event with category 'annadanam' from Community." testID="anna-empty" /> :
-              annadanam.map((e: any) => <EventRow key={e.event_id} e={e} user={user}
-                expanded={expanded === e.event_id}
-                onToggle={() => setExpanded(expanded === e.event_id ? null : e.event_id)}
-                plusOnes={plus[e.event_id] || 0}
-                setPlus={(n) => setPlus({ ...plus, [e.event_id]: n })}
-                onRsvp={(status) => rsvpM.mutate({ id: e.event_id, status, plus_ones: plus[e.event_id] || 0 })} />)}
+              annadanam.map(commonRow)}
 
             {others.length > 0 ? (
               <>
                 <Text style={styles.section}>Other events</Text>
-                {others.map((e: any) => <EventRow key={e.event_id} e={e} user={user}
-                  expanded={expanded === e.event_id}
-                  onToggle={() => setExpanded(expanded === e.event_id ? null : e.event_id)}
-                  plusOnes={plus[e.event_id] || 0}
-                  setPlus={(n) => setPlus({ ...plus, [e.event_id]: n })}
-                  onRsvp={(status) => rsvpM.mutate({ id: e.event_id, status, plus_ones: plus[e.event_id] || 0 })} />)}
+                {others.map(commonRow)}
               </>
             ) : null}
           </>
@@ -63,7 +84,7 @@ export default function Prasadam() {
   );
 }
 
-function EventRow({ e, expanded, onToggle, plusOnes, setPlus, onRsvp, user }: any) {
+function EventRow({ e, expanded, onToggle, plusOnes, setPlus, onRsvp, user, isOfficer, onAdjustPlus, onRemove }: any) {
   return (
     <Pressable onPress={onToggle} style={styles.card} testID={`prasadam-event-${e.event_id}`}>
       <View style={styles.head}>
@@ -94,20 +115,53 @@ function EventRow({ e, expanded, onToggle, plusOnes, setPlus, onRsvp, user }: an
           </View>
           <View style={{ flexDirection: "row", gap: spacing.sm }}>
             <Pressable onPress={() => onRsvp("yes")} style={[styles.rsvpBtn, { backgroundColor: colors.success }]} testID={`rsvp-yes-${e.event_id}`}>
-              <Text style={styles.rsvpTxt}>I'll be there</Text>
+              <Text style={styles.rsvpTxt}>{"I'll be there"}</Text>
             </Pressable>
             <Pressable onPress={() => onRsvp("maybe")} style={[styles.rsvpBtn, { backgroundColor: colors.warning }]} testID={`rsvp-maybe-${e.event_id}`}>
               <Text style={styles.rsvpTxt}>Maybe</Text>
             </Pressable>
             <Pressable onPress={() => onRsvp("no")} style={[styles.rsvpBtn, { backgroundColor: colors.error }]} testID={`rsvp-no-${e.event_id}`}>
-              <Text style={styles.rsvpTxt}>Can't</Text>
+              <Text style={styles.rsvpTxt}>{"Can't"}</Text>
             </Pressable>
           </View>
           {e.yes_list?.length > 0 ? (
             <View style={styles.listBox}>
               <Text style={styles.listLbl}>Confirmed sevaks</Text>
-              {e.yes_list.map((r: any, i: number) => (
-                <Text key={i} style={styles.listItem}>· {r.user_name} ({r.user_role}){r.plus_ones ? ` +${r.plus_ones}` : ""}</Text>
+              {e.yes_list.map((r: any) => {
+                const canManage = isOfficer || r.user_id === user?.user_id;
+                return (
+                  <View key={r.user_id} style={styles.rsvpItem}>
+                    <Text style={styles.listItem}>
+                      · {r.user_name} ({r.user_role}){r.plus_ones ? ` +${r.plus_ones}` : ""}
+                    </Text>
+                    {canManage ? (
+                      <View style={{ flexDirection: "row", gap: 6 }}>
+                        <Pressable onPress={() => onAdjustPlus(r.user_id, Math.max(0, (r.plus_ones || 0) - 1))} style={styles.tinyBtn} testID={`plus-dec-${e.event_id}-${r.user_id}`}>
+                          <Text style={styles.tinyBtnTxt}>−</Text>
+                        </Pressable>
+                        <Pressable onPress={() => onAdjustPlus(r.user_id, (r.plus_ones || 0) + 1)} style={styles.tinyBtn} testID={`plus-inc-${e.event_id}-${r.user_id}`}>
+                          <Text style={styles.tinyBtnTxt}>+</Text>
+                        </Pressable>
+                        <Pressable onPress={() => onRemove(r.user_id, r.user_name)} style={[styles.tinyBtn, styles.tinyBtnDanger]} testID={`rsvp-remove-${e.event_id}-${r.user_id}`}>
+                          <Text style={[styles.tinyBtnTxt, { color: colors.onError }]}>✕</Text>
+                        </Pressable>
+                      </View>
+                    ) : null}
+                  </View>
+                );
+              })}
+            </View>
+          ) : null}
+          {isOfficer && (e.maybe_list?.length > 0 || e.no_list?.length > 0) ? (
+            <View style={styles.listBox}>
+              <Text style={styles.listLbl}>Not confirmed</Text>
+              {[...(e.maybe_list || []), ...(e.no_list || [])].map((r: any) => (
+                <View key={`${r.status}-${r.user_id}`} style={styles.rsvpItem}>
+                  <Text style={styles.listItem}>{`· ${r.user_name} — ${r.status === "maybe" ? "maybe" : "can't come"}`}</Text>
+                  <Pressable onPress={() => onRemove(r.user_id, r.user_name)} style={[styles.tinyBtn, styles.tinyBtnDanger]} testID={`rsvp-remove-${e.event_id}-${r.user_id}`}>
+                    <Text style={[styles.tinyBtnTxt, { color: colors.onError }]}>✕</Text>
+                  </Pressable>
+                </View>
               ))}
             </View>
           ) : null}
@@ -136,5 +190,9 @@ const styles = StyleSheet.create({
   rsvpTxt: { color: "#FFFFFF", fontWeight: "700", fontSize: 13 },
   listBox: { marginTop: spacing.md, paddingTop: spacing.sm, borderTopWidth: 1, borderTopColor: colors.border },
   listLbl: { color: colors.muted, fontSize: 11, fontWeight: "700", letterSpacing: 0.5, textTransform: "uppercase", marginBottom: 4 },
-  listItem: { color: colors.onSurfaceTertiary, fontSize: 12, marginBottom: 2 },
+  listItem: { color: colors.onSurfaceTertiary, fontSize: 12, flexShrink: 1 },
+  rsvpItem: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 4, gap: spacing.sm },
+  tinyBtn: { width: 26, height: 26, borderRadius: 13, backgroundColor: colors.surfaceTertiary, alignItems: "center", justifyContent: "center" },
+  tinyBtnDanger: { backgroundColor: colors.error },
+  tinyBtnTxt: { color: colors.onSurface, fontWeight: "800", fontSize: 14, lineHeight: 16 },
 });

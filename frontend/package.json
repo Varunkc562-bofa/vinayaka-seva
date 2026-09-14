@@ -44,6 +44,7 @@
     "react-native-screens": "4.26.2",
     "react-native-web": "0.21.2",
     "react-native-webview": "13.16.1",
+    "firebase": "^12.4.0",
     "react-native-worklets": "0.10.1"
   },
   "devDependencies": {

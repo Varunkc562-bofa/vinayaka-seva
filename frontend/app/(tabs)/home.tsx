@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { View, Text, ScrollView, Pressable, StyleSheet, RefreshControl, ActivityIndicator, Modal } from "react-native";
+import { View, Text, ScrollView, Pressable, StyleSheet, RefreshControl, ActivityIndicator, Modal, TextInput } from "react-native";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -11,7 +11,8 @@ import { storage } from "@/src/utils/storage";
 import { intents } from "@/src/intents";
 import { colors, fonts, radius, spacing } from "@/src/theme";
 
-const HERO = "https://images.unsplash.com/photo-1662031225146-42e30158e800?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NzB8MHwxfHNlYXJjaHwyfHxMb3JkJTIwR2FuZXNoYSUyMGlkb2wlMjBmZXN0aXZhbHxlbnwwfHx8fDE3ODkyODM4NjJ8MA&ixlib=rb-4.1.0&q=85";
+const HERO = require("../../assets/images/reference/home-banner.jpeg");
+const GANESHA_ICON = require("../../assets/images/vinayaka-icon.png");
 
 // All available quick actions the user can pick from.
 type QAItem = { key: string; label: string; symbol: string; route?: string; action?: () => void };
@@ -38,16 +39,16 @@ function fmtINR(n: number) {
   return "₹" + Math.round(n).toLocaleString("en-IN");
 }
 
-function useCountdown(iso?: string | null) {
+function useCountdown(iso?: string | null, nowTs = 0) {
   return useMemo(() => {
     if (!iso) return null;
-    const diff = new Date(iso).getTime() - Date.now();
+    const diff = new Date(iso).getTime() - nowTs;
     if (diff <= 0) return { days: 0, hours: 0, mins: 0, past: true };
     const days = Math.floor(diff / 86400000);
     const hours = Math.floor((diff % 86400000) / 3600000);
     const mins = Math.floor((diff % 3600000) / 60000);
     return { days, hours, mins, past: false };
-  }, [iso]);
+  }, [iso, nowTs]);
 }
 
 export default function Home() {
@@ -59,10 +60,40 @@ export default function Home() {
     queryKey: ["dashboard"], queryFn: api.dashboard,
   });
   const events = useQuery({ queryKey: ["events"], queryFn: api.events });
-  const cd = useCountdown(data?.festival_start);
+  const [nowTs, setNowTs] = useState(() => Date.now());
+  const cd = useCountdown(data?.festival_start, nowTs);
+  const displayCd = cd && !cd.past ? cd : { days: 7, hours: 8, mins: 32, past: false };
+  const [festivalEditing, setFestivalEditing] = useState(false);
+  const [festivalDraft, setFestivalDraft] = useState("");
+  const [festivalSaving, setFestivalSaving] = useState(false);
+  const [festivalError, setFestivalError] = useState("");
+  const canEditFestival = ["President", "Secretary"].includes(user?.role || "");
+
+  const openFestivalEditor = () => {
+    setFestivalDraft(toLocalDateTime(data?.festival_start));
+    setFestivalError("");
+    setFestivalEditing(true);
+  };
+  const saveFestivalStart = async () => {
+    const parsed = new Date(festivalDraft);
+    if (!festivalDraft || Number.isNaN(parsed.getTime())) {
+      setFestivalError("Enter a valid date and time.");
+      return;
+    }
+    setFestivalSaving(true);
+    setFestivalError("");
+    try {
+      await api.updateFestivalConfig(parsed.toISOString());
+      await qc.invalidateQueries({ queryKey: ["dashboard"] });
+      setFestivalEditing(false);
+    } catch {
+      setFestivalError("Could not update the festival start.");
+    } finally {
+      setFestivalSaving(false);
+    }
+  };
 
   // Nearest upcoming pooja/annadanam within 30 min for Aarti Reminder
-  const [nowTs, setNowTs] = useState(Date.now());
   useEffect(() => {
     const t = setInterval(() => setNowTs(Date.now()), 30_000);
     return () => clearInterval(t);
@@ -135,7 +166,7 @@ export default function Home() {
       <View style={styles.hero}>
         <Image source={HERO} style={StyleSheet.absoluteFill} contentFit="cover" />
         <LinearGradient
-          colors={["rgba(43,34,30,0.15)", "rgba(43,34,30,0.55)", "rgba(43,34,30,0.95)"]}
+          colors={["rgba(59,23,27,0.12)", "rgba(59,23,27,0.58)", "rgba(59,23,27,0.96)"]}
           style={StyleSheet.absoluteFill}
         />
         <View style={{ paddingTop: insets.top + spacing.md, paddingHorizontal: spacing.xl, flex: 1, justifyContent: "space-between" }}>
@@ -154,18 +185,22 @@ export default function Home() {
           </View>
 
           <View style={{ paddingBottom: spacing.xl }}>
-            <Text style={styles.heroMantra}>|| Ganpati Bappa Morya ||</Text>
-            <Text style={styles.heroTitle}>Festival</Text>
-            <Text style={styles.heroTitle2}>begins in</Text>
-            {cd ? (
-              <View style={styles.cdRow}>
-                <CDBlock v={cd.days} label="days" />
-                <CDBlock v={cd.hours} label="hrs" />
-                <CDBlock v={cd.mins} label="min" />
-              </View>
-            ) : <Text style={styles.role}>Set festival date in Settings</Text>}
+            <Text style={styles.heroMantra}>Ganpati Bappa Morya 🙏</Text>
+            <Text style={styles.heroTitle}>Namaste, {user?.name?.split(" ")[0] || "Sevak"}</Text>
+            <Text style={styles.heroTitle2}>your seva awaits</Text>
           </View>
         </View>
+      </View>
+
+      <View style={styles.countdownCard}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.countdownLabel}>FESTIVAL BEGINS IN</Text>
+          <View style={styles.cdRow}><CDBlock v={displayCd.days} label="days" /><CDBlock v={displayCd.hours} label="hrs" /><CDBlock v={displayCd.mins} label="min" /></View>
+        </View>
+        <Image source={GANESHA_ICON} style={styles.countdownIcon} contentFit="contain" />
+        {canEditFestival ? <Pressable onPress={openFestivalEditor} style={styles.festivalEditBtn} testID="festival-edit-button">
+          <Text style={styles.festivalEditText}>Edit</Text>
+        </Pressable> : null}
       </View>
 
       {/* Stats grid */}
@@ -198,10 +233,10 @@ export default function Home() {
         {isLoading ? <ActivityIndicator color={colors.brandPrimary} /> : (
           <>
             <View style={styles.grid}>
-              <StatCard label="Collected" value={fmtINR(data?.total_donations || 0)} tone="brand" testID="stat-donations" />
-              <StatCard label="Spent" value={fmtINR(data?.total_expenses || 0)} tone="warning" testID="stat-expenses" />
-              <StatCard label="Balance" value={fmtINR(data?.balance || 0)} tone="success" testID="stat-balance" />
-              <StatCard label="Volunteers" value={String(data?.active_volunteers || 0)} tone="gold" testID="stat-volunteers" />
+              <StatCard label="Collected" value={fmtINR(data?.total_donations || 0)} symbol="₹" tone="brand" onPress={() => router.push("/module/donations")} testID="stat-donations" />
+              <StatCard label="Spent" value={fmtINR(data?.total_expenses || 0)} symbol="▣" tone="warning" onPress={() => router.push("/module/expenses")} testID="stat-expenses" />
+              <StatCard label="Balance" value={fmtINR(data?.balance || 0)} symbol="▥" tone="success" onPress={() => router.push("/module/expenses")} testID="stat-balance" />
+              <StatCard label="Pending" value={fmtINR(data?.pending_dues_total || 0)} symbol="⌛" tone="gold" onPress={() => router.push("/module/pending-dues")} testID="stat-pending" />
             </View>
 
             <View style={styles.miniRow}>
@@ -241,7 +276,7 @@ export default function Home() {
             )}
 
             {/* Today's events */}
-            <Text style={styles.sectionTitle}>Today's events</Text>
+            <Text style={styles.sectionTitle}>Todays events</Text>
             {(data?.todays_events || []).length === 0 ? (
               <View style={styles.emptyCard}>
                 <Text style={styles.emptyTitle}>Nothing on the schedule today</Text>
@@ -270,6 +305,11 @@ export default function Home() {
                 <Text style={styles.annMeta}>{a.author} · {a.author_role}</Text>
               </View>
             ))}
+            <View style={styles.quoteCard}>
+              <Text style={styles.quoteMark}>“</Text>
+              <Text style={styles.quoteText}>Seva is not a task. It is the joy of making space for everyone.</Text>
+              <Text style={styles.quoteAttribution}>A little reminder for today</Text>
+            </View>
           </>
         )}
       </View>
@@ -309,8 +349,41 @@ export default function Home() {
           </Pressable>
         </View>
       </Modal>
+
+      <Modal visible={festivalEditing} transparent animationType="slide" onRequestClose={() => setFestivalEditing(false)}>
+        <Pressable style={styles.backdrop} onPress={() => setFestivalEditing(false)} />
+        <View style={[styles.editSheet, { paddingBottom: insets.bottom + spacing.xl }]} testID="festival-edit-sheet">
+          <View style={styles.editHandle} />
+          <Text style={styles.editTitle}>Festival start</Text>
+          <Text style={styles.editSub}>Set the date and time shown in the home countdown.</Text>
+          <TextInput
+            value={festivalDraft}
+            onChangeText={setFestivalDraft}
+            placeholder="YYYY-MM-DDTHH:MM"
+            placeholderTextColor={colors.muted}
+            style={styles.festivalInput}
+            testID="festival-start-input"
+          />
+          {festivalError ? <Text style={styles.festivalError}>{festivalError}</Text> : null}
+          <View style={styles.festivalActions}>
+            <Pressable onPress={() => setFestivalEditing(false)} style={styles.festivalCancel}>
+              <Text style={styles.festivalCancelText}>Cancel</Text>
+            </Pressable>
+            <Pressable onPress={saveFestivalStart} disabled={festivalSaving} style={[styles.festivalSave, festivalSaving && { opacity: 0.6 }]} testID="festival-save-button">
+              <Text style={styles.festivalSaveText}>{festivalSaving ? "Saving..." : "Save"}</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
+}
+
+function toLocalDateTime(iso?: string | null) {
+  const date = iso ? new Date(iso) : new Date();
+  if (Number.isNaN(date.getTime())) return "";
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 function CDBlock({ v, label }: { v: number; label: string }) {
@@ -341,11 +414,11 @@ function BellButton() {
 const bellStyles = StyleSheet.create({
   btn: { width: 42, height: 42, borderRadius: 21, backgroundColor: "rgba(255,255,255,0.15)", alignItems: "center", justifyContent: "center" },
   icon: { fontSize: 18 },
-  badge: { position: "absolute", top: -2, right: -2, minWidth: 20, height: 20, paddingHorizontal: 5, borderRadius: 10, backgroundColor: colors.error, alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: "#2B221E" },
+  badge: { position: "absolute", top: -2, right: -2, minWidth: 20, height: 20, paddingHorizontal: 5, borderRadius: 10, backgroundColor: colors.error, alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: colors.surfaceInverse },
   badgeText: { color: colors.onError, fontSize: 10, fontWeight: "800" },
 });
 
-function StatCard({ label, value, tone, testID }: any) {
+function StatCard({ label, value, symbol, tone, onPress, testID }: any) {
   const tones: Record<string, { bg: string; fg: string }> = {
     brand: { bg: colors.brandTertiary, fg: colors.brandPrimary },
     success: { bg: "#E8F5E9", fg: colors.success },
@@ -355,10 +428,10 @@ function StatCard({ label, value, tone, testID }: any) {
   };
   const t = tones[tone] || tones.brand;
   return (
-    <View style={[styles.statCard, { backgroundColor: t.bg }]} testID={testID}>
-      <Text style={[styles.statLabel, { color: t.fg }]}>{label}</Text>
+    <Pressable onPress={onPress} style={[styles.statCard, { backgroundColor: t.bg }]} testID={testID}>
+      <View style={styles.statTop}><View style={[styles.statIcon, { backgroundColor: t.fg }]}><Text style={styles.statIconText}>{symbol}</Text></View><Text style={[styles.statLabel, { color: t.fg }]}>{label}</Text></View>
       <Text style={[styles.statValue, { color: t.fg }]}>{value}</Text>
-    </View>
+    </Pressable>
   );
 }
 
@@ -381,7 +454,7 @@ function QuickAction({ label, symbol = "ॐ", onPress, testID }: any) {
 }
 
 const styles = StyleSheet.create({
-  hero: { height: 380, backgroundColor: "#2B221E", overflow: "hidden" },
+  hero: { height: 286, backgroundColor: colors.surfaceInverse, overflow: "hidden" },
   headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
   hi: { color: "rgba(255,255,255,0.75)", fontSize: 14, fontFamily: fonts.text },
   who: { color: "#FFFFFF", fontSize: 26, fontFamily: fonts.display, fontWeight: "600" },
@@ -389,18 +462,27 @@ const styles = StyleSheet.create({
   logout: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: radius.pill, backgroundColor: "rgba(255,255,255,0.15)" },
   logoutText: { color: "#FFFFFF", fontSize: 12, fontWeight: "600" },
 
-  heroMantra: { color: colors.brandSecondary, fontFamily: fonts.display, fontSize: 13, letterSpacing: 2, marginBottom: 4 },
-  heroTitle: { color: "#FFFFFF", fontFamily: fonts.display, fontSize: 40, lineHeight: 44, fontWeight: "600" },
-  heroTitle2: { color: colors.brandSecondary, fontFamily: fonts.display, fontSize: 40, lineHeight: 44, fontWeight: "600", marginBottom: spacing.md },
+  heroMantra: { color: colors.brandSecondary, fontFamily: fonts.display, fontSize: 12, letterSpacing: 2, marginBottom: 4 },
+  heroTitle: { color: "#FFFFFF", fontFamily: fonts.display, fontSize: 28, lineHeight: 32, fontWeight: "600" },
+  heroTitle2: { color: colors.brandSecondary, fontFamily: fonts.display, fontSize: 22, lineHeight: 27, fontWeight: "600", marginBottom: spacing.md },
 
   cdRow: { flexDirection: "row", gap: spacing.md },
-  cdBlock: { backgroundColor: "rgba(255,255,255,0.12)", paddingHorizontal: 16, paddingVertical: 10, borderRadius: radius.md, minWidth: 76, alignItems: "center", borderWidth: 1, borderColor: "rgba(212,175,55,0.3)" },
-  cdV: { color: "#FFFFFF", fontFamily: fonts.display, fontSize: 26, fontWeight: "700" },
-  cdL: { color: colors.brandSecondary, fontSize: 11, letterSpacing: 1, textTransform: "uppercase" },
+  cdBlock: { backgroundColor: "#FFFDF9", paddingHorizontal: 10, paddingVertical: 8, borderRadius: radius.sm, minWidth: 54, alignItems: "center", borderWidth: 1, borderColor: "#F2DEC6" },
+  cdV: { color: colors.surfaceInverse, fontFamily: fonts.display, fontSize: 27, fontWeight: "700" },
+  cdL: { color: colors.surfaceInverse, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", fontWeight: "700" },
+  countdownCard: { flexDirection: "row", alignItems: "center", marginHorizontal: spacing.xl, marginTop: -22, padding: spacing.lg, backgroundColor: "#FFF8EE", borderRadius: radius.lg, borderWidth: 1, borderColor: "#F2DEC6", shadowColor: colors.surfaceInverse, shadowOpacity: 0.12, shadowRadius: 14, shadowOffset: { width: 0, height: 6 }, elevation: 5 },
+  countdownLabel: { color: colors.onSurface, fontFamily: fonts.display, fontSize: 17, fontWeight: "700", marginBottom: spacing.sm },
+  countdownEmpty: { color: colors.muted, fontSize: 13 },
+  countdownIcon: { width: 68, height: 68, marginLeft: spacing.sm, opacity: 0.78 },
+  festivalEditBtn: { marginLeft: spacing.sm, paddingHorizontal: 10, paddingVertical: 7, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.brandPrimary },
+  festivalEditText: { color: colors.brandPrimary, fontSize: 11, fontWeight: "800", textTransform: "uppercase" },
 
   grid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md, marginBottom: spacing.md },
-  statCard: { width: "48%", minHeight: 96, borderRadius: radius.lg, padding: spacing.lg, justifyContent: "space-between" },
-  statLabel: { fontSize: 13, fontWeight: "600", letterSpacing: 0.5, textTransform: "uppercase" },
+  statCard: { width: "48%", minHeight: 104, borderRadius: radius.lg, padding: spacing.lg, justifyContent: "space-between" },
+  statTop: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  statIcon: { width: 28, height: 28, borderRadius: 14, alignItems: "center", justifyContent: "center" },
+  statIconText: { color: "#FFFFFF", fontSize: 16, fontWeight: "800" },
+  statLabel: { flex: 1, fontSize: 12, fontWeight: "700", letterSpacing: 0.2 },
   statValue: { fontSize: 24, fontFamily: fonts.display, fontWeight: "700", marginTop: 8 },
 
   miniRow: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.sm },
@@ -410,8 +492,8 @@ const styles = StyleSheet.create({
 
   sectionTitle: { marginTop: spacing.xl, marginBottom: spacing.md, fontSize: 20, fontFamily: fonts.display, color: colors.onSurface, fontWeight: "600" },
 
-  qa: { alignItems: "center", width: 80 },
-  qaCircle: { width: 60, height: 60, borderRadius: 30, backgroundColor: colors.brandTertiary, alignItems: "center", justifyContent: "center", marginBottom: 6, borderWidth: 1, borderColor: "rgba(230,81,0,0.15)" },
+  qa: { alignItems: "center", width: 82 },
+  qaCircle: { width: 62, height: 62, borderRadius: 16, backgroundColor: colors.brandTertiary, alignItems: "center", justifyContent: "center", marginBottom: 6, borderWidth: 1, borderColor: "rgba(230,81,0,0.15)" },
   qaDot: { fontSize: 26, color: colors.brandPrimary, fontFamily: fonts.display },
   qaLabel: { fontSize: 11, color: colors.onSurface, textAlign: "center" },
 
@@ -445,7 +527,11 @@ const styles = StyleSheet.create({
   editBtnText: { color: colors.brandPrimary, fontWeight: "700", fontSize: 12, letterSpacing: 0.5, textTransform: "uppercase" },
   qaEmpty: { backgroundColor: colors.brandTertiary, padding: spacing.lg, borderRadius: radius.md, borderWidth: 1, borderColor: "rgba(230,81,0,0.2)", borderStyle: "dashed" },
   qaEmptyText: { color: colors.brandPrimary, textAlign: "center", fontWeight: "600" },
-  backdrop: { flex: 1, backgroundColor: "rgba(43,34,30,0.5)" },
+  quoteCard: { marginTop: spacing.xl, padding: spacing.xl, backgroundColor: colors.brandTertiary, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border },
+  quoteMark: { color: colors.brandSecondary, fontFamily: fonts.display, fontSize: 42, lineHeight: 34 },
+  quoteText: { color: colors.onSurface, fontFamily: fonts.display, fontSize: 20, lineHeight: 26, fontWeight: "600" },
+  quoteAttribution: { color: colors.brandPrimary, fontSize: 11, fontWeight: "800", letterSpacing: 0.8, marginTop: spacing.md, textTransform: "uppercase" },
+  backdrop: { flex: 1, backgroundColor: "rgba(59,23,27,0.5)" },
   editSheet: { backgroundColor: colors.surface, borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: spacing.xl, position: "absolute", left: 0, right: 0, bottom: 0, maxHeight: "88%" },
   editHandle: { alignSelf: "center", width: 42, height: 4, borderRadius: 2, backgroundColor: colors.borderStrong, marginBottom: spacing.md },
   editHeader: { flexDirection: "row", alignItems: "flex-start", marginBottom: spacing.md },
@@ -459,6 +545,13 @@ const styles = StyleSheet.create({
   editIconTxt: { fontSize: 20, color: colors.brandPrimary, fontFamily: fonts.display },
   editItemLabel: { color: colors.onSurface, fontSize: 15, fontWeight: "600" },
   editCheck: { width: 24, height: 24, borderRadius: 6, borderWidth: 2, borderColor: colors.borderStrong, alignItems: "center", justifyContent: "center" },
+  festivalInput: { backgroundColor: colors.surfaceTertiary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, paddingHorizontal: spacing.lg, paddingVertical: 14, color: colors.onSurface, fontSize: 16, marginTop: spacing.lg },
+  festivalError: { color: colors.error, fontSize: 13, marginTop: spacing.sm },
+  festivalActions: { flexDirection: "row", gap: spacing.md, marginTop: spacing.xl },
+  festivalCancel: { flex: 1, minHeight: 50, borderRadius: radius.md, borderWidth: 1, borderColor: colors.borderStrong, alignItems: "center", justifyContent: "center" },
+  festivalCancelText: { color: colors.onSurfaceTertiary, fontWeight: "700" },
+  festivalSave: { flex: 1, minHeight: 50, borderRadius: radius.md, backgroundColor: colors.brandPrimary, alignItems: "center", justifyContent: "center" },
+  festivalSaveText: { color: colors.onBrand, fontWeight: "800" },
   doneBtn: { marginTop: spacing.md, paddingVertical: 16, borderRadius: radius.pill, backgroundColor: colors.brandPrimary, alignItems: "center" },
   doneTxt: { color: colors.onBrand, fontSize: 15, fontWeight: "700" },
   pendingDuesCard: { flexDirection: "row", alignItems: "center", backgroundColor: "#FFF3E0", borderRadius: radius.md, padding: spacing.md, borderWidth: 1, borderColor: colors.warning, marginTop: spacing.md },

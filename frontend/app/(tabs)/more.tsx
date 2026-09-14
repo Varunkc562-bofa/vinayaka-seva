@@ -8,19 +8,25 @@ import { useAuth } from "@/src/auth";
 import { colors, fonts, radius, spacing } from "@/src/theme";
 import { ScreenHeader } from "@/src/ui";
 
-const MODULES = [
-  { key: "donations", label: "Donations", symbol: "₹", route: "/module/donations", tint: "#E65100" },
-  { key: "pending-dues", label: "Pending Dues", symbol: "⏳", route: "/module/pending-dues", tint: "#F57F17" },
-  { key: "expenses", label: "Expenses", symbol: "₹", route: "/module/expenses", tint: "#800000" },
-  { key: "seva-ai", label: "Seva AI", symbol: "ॐ", route: "/module/seva-ai", tint: "#D4AF37" },
-  { key: "announcements", label: "Announce", symbol: "📣", route: "/module/announcements", tint: "#F57F17" },
-  { key: "gallery", label: "Gallery", symbol: "🖼", route: "/module/gallery", tint: "#2E7D32" },
-  { key: "polls", label: "Decisions", symbol: "🗳", route: "/module/polls", tint: "#4E342E" },
-  { key: "donor-wall", label: "Donor Wall", symbol: "🌼", route: "/module/donor-wall", tint: "#B8860B" },
-  { key: "prasadam", label: "Prasadam", symbol: "🍚", route: "/module/prasadam", tint: "#6B4E3D" },
-  { key: "shifts", label: "Shifts", symbol: "⏱", route: "/module/shifts", tint: "#2E7D32" },
-  { key: "sms-settings", label: "SMS Setup", symbol: "✉", route: "/module/sms-settings", tint: "#4E342E" },
-  { key: "profile", label: "Profile", symbol: "🌸", route: "/module/profile", tint: "#8B6B00" },
+const MODULE_GROUPS = [
+  { title: "FINANCE & ACCOUNTS", items: [
+    { key: "donations", label: "Donations", description: "Record seva contributions", symbol: "₹", route: "/module/donations" },
+    { key: "expenses", label: "Expenses", description: "Track festival spending", symbol: "↗", route: "/module/expenses" },
+    { key: "pending-dues", label: "Pending Dues", description: "Follow up on pledges", symbol: "○", route: "/module/pending-dues" },
+  ] },
+  { title: "FESTIVAL MANAGEMENT", items: [
+    { key: "shifts", label: "Seva & Volunteers", description: "Coordinate service shifts", symbol: "✦", route: "/module/shifts" },
+    { key: "prasadam", label: "Prasadam", description: "Manage annadanam roster", symbol: "◇", route: "/module/prasadam" },
+    { key: "announcements", label: "Announcements", description: "Keep the committee informed", symbol: "!", route: "/module/announcements" },
+    { key: "gallery", label: "Gallery", description: "Share festival memories", symbol: "▧", route: "/module/gallery" },
+    { key: "polls", label: "Committee Decisions", description: "Gather votes and opinions", symbol: "◉", route: "/module/polls" },
+  ] },
+  { title: "YOUR COMMITTEE", items: [
+    { key: "profile", label: "Profile", description: "Your seva identity", symbol: "○", route: "/module/profile" },
+    { key: "donor-wall", label: "Donor Wall", description: "Honor community supporters", symbol: "✧", route: "/module/donor-wall" },
+    { key: "seva-ai", label: "Seva AI", description: "A thoughtful planning companion", symbol: "ॐ", route: "/module/seva-ai" },
+    { key: "sms-settings", label: "SMS Settings", description: "Configure thank-you messages", symbol: "✉", route: "/module/sms-settings" },
+  ] },
 ];
 
 export default function More() {
@@ -63,16 +69,18 @@ export default function More() {
           </View>
         </View>
 
-        <View style={styles.grid}>
-          {MODULES.map(m => (
-            <Pressable key={m.key} onPress={() => router.push(m.route as any)} style={styles.tile} testID={`tile-${m.key}`}>
-              <View style={[styles.tileIcon, { backgroundColor: m.tint + "18" }]}>
-                <Text style={[styles.tileSymbol, { color: m.tint }]}>{m.symbol}</Text>
-              </View>
-              <Text style={styles.tileLabel}>{m.label}</Text>
-            </Pressable>
-          ))}
-        </View>
+        {MODULE_GROUPS.map(group => (
+          <View key={group.title} style={styles.group}>
+            <Text style={styles.groupTitle}>{group.title}</Text>
+            {group.items.map(item => (
+              <Pressable key={item.key} onPress={() => router.push(item.route as any)} style={({ pressed }) => [styles.row, pressed && styles.rowPressed]} testID={`tile-${item.key}`}>
+                <View style={styles.rowIcon}><Text style={styles.rowSymbol}>{item.symbol}</Text></View>
+                <View style={{ flex: 1 }}><Text style={styles.rowLabel}>{item.label}</Text><Text style={styles.rowDescription}>{item.description}</Text></View>
+                <Text style={styles.chevron}>›</Text>
+              </Pressable>
+            ))}
+          </View>
+        ))}
 
         <Pressable onPress={signOut} style={styles.signOut} testID="signout-button">
           <Text style={styles.signOutText}>Sign out</Text>
@@ -89,11 +97,15 @@ const styles = StyleSheet.create({
   name: { fontFamily: fonts.display, fontSize: 20, fontWeight: "600", color: colors.onSurface },
   role: { color: colors.brandPrimary, fontSize: 12, fontWeight: "700", letterSpacing: 0.5, textTransform: "uppercase", marginTop: 2 },
   email: { color: colors.muted, fontSize: 12, marginTop: 2 },
-  grid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md },
-  tile: { width: "31%", aspectRatio: 1, backgroundColor: colors.surfaceSecondary, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, alignItems: "center", justifyContent: "center", padding: spacing.md },
-  tileIcon: { width: 52, height: 52, borderRadius: 26, alignItems: "center", justifyContent: "center", marginBottom: spacing.sm },
-  tileSymbol: { fontSize: 26, fontFamily: fonts.display, fontWeight: "700" },
-  tileLabel: { fontSize: 12, fontFamily: fonts.text, color: colors.onSurface, textAlign: "center", fontWeight: "600" },
+  group: { marginBottom: spacing.xl },
+  groupTitle: { color: colors.muted, fontSize: 11, fontWeight: "800", letterSpacing: 1.2, marginBottom: spacing.sm },
+  row: { minHeight: 72, flexDirection: "row", alignItems: "center", backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, paddingHorizontal: spacing.md, marginBottom: spacing.sm },
+  rowPressed: { backgroundColor: colors.brandTertiary, borderColor: colors.brandPrimary },
+  rowIcon: { width: 42, height: 42, borderRadius: 14, backgroundColor: colors.brandTertiary, alignItems: "center", justifyContent: "center", marginRight: spacing.md },
+  rowSymbol: { color: colors.brandPrimary, fontFamily: fonts.display, fontSize: 22, fontWeight: "700" },
+  rowLabel: { color: colors.onSurface, fontSize: 15, fontWeight: "800" },
+  rowDescription: { color: colors.muted, fontSize: 12, marginTop: 3 },
+  chevron: { color: colors.brandPrimary, fontFamily: fonts.display, fontSize: 28, marginLeft: spacing.sm },
   signOut: { marginTop: spacing["2xl"], paddingVertical: 16, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.error, alignItems: "center" },
   signOutText: { color: colors.error, fontWeight: "700" },
   committeeCard: { flexDirection: "row", alignItems: "center", backgroundColor: colors.brandTertiary, borderRadius: radius.lg, padding: spacing.lg, borderWidth: 1, borderColor: "rgba(230,81,0,0.2)", marginBottom: spacing.md },

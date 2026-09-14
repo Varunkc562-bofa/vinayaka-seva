@@ -44,7 +44,7 @@ export default function CommitteeOnboarding() {
   if (created) {
     return (
       <View style={{ flex: 1, backgroundColor: colors.surface }} testID="committee-created-screen">
-        <LinearGradient colors={["#2B221E", "#4E342E"]} style={[styles.hero, { paddingTop: insets.top + spacing["2xl"] }]}>
+        <LinearGradient colors={[colors.surfaceInverse, colors.info]} style={[styles.hero, { paddingTop: insets.top + spacing["2xl"] }]}>
           <Text style={styles.heroMantra}>|| Ganpati Bappa Morya ||</Text>
           <Text style={styles.heroTitle}>{created.name}</Text>
           <Text style={styles.heroSub}>Your committee is ready</Text>
@@ -64,7 +64,7 @@ export default function CommitteeOnboarding() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }} testID="committee-screen">
-      <LinearGradient colors={["#2B221E", "#4E342E"]} style={[styles.hero, { paddingTop: insets.top + spacing["2xl"] }]}>
+      <LinearGradient colors={[colors.surfaceInverse, colors.info]} style={[styles.hero, { paddingTop: insets.top + spacing["2xl"] }]}>
         <Text style={styles.heroMantra}>|| Om Gan Ganapataye Namah ||</Text>
         <Text style={styles.heroTitle}>Join or start a committee</Text>
         <Text style={styles.heroSub}>Your data is private to your committee</Text>

@@ -52,13 +52,17 @@ async function request(path: string, opts: RequestInit = {}) {
 }
 
 export const api = {
-  authSession: (session_id: string) => request("/auth/session", {
-    method: "POST", body: JSON.stringify({ session_id }),
+  firebaseAuth: (id_token: string) => request("/auth/firebase", {
+    method: "POST", body: JSON.stringify({ id_token }),
   }),
   me: () => request("/auth/me"),
   logout: () => request("/auth/logout", { method: "POST" }),
 
   dashboard: () => request("/dashboard"),
+  festivalConfig: () => request("/config/festival"),
+  updateFestivalConfig: (festival_start: string) => request("/config/festival", {
+    method: "PUT", body: JSON.stringify({ festival_start }),
+  }),
   members: () => request("/members"),
   updateRole: (id: string, role: string) => request(`/members/${id}/role`, {
     method: "PATCH", body: JSON.stringify({ role }),
@@ -136,6 +140,12 @@ export const api = {
   rsvp: (event_id: string, status: string, plus_ones = 0) => request(`/events/${event_id}/rsvp`, {
     method: "POST", body: JSON.stringify({ status, plus_ones }),
   }),
+
+  // Prasadam RSVP editing (officers can edit any, users can edit their own)
+  editRsvp: (event_id: string, user_id: string, data: { status?: string; plus_ones?: number }) =>
+    request(`/events/${event_id}/rsvps/${user_id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  removeRsvp: (event_id: string, user_id: string) =>
+    request(`/events/${event_id}/rsvps/${user_id}`, { method: "DELETE" }),
 };
 
 // Multipart file upload — returns { storage_path, url, size }

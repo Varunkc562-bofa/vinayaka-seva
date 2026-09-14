@@ -1,26 +1,30 @@
 {
   "expo": {
-    "name": "frontend",
+    "name": "Vinayaka Seva",
     "slug": "frontend",
     "version": "1.0.0",
+    "jsEngine": "jsc",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
-    "scheme": "frontend",
+    "icon": "./assets/images/vinayaka-icon.png",
+    "scheme": "vinayaka-seva",
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.emergent.festivalhub.qk786z",
+      "bundleIdentifier": "com.ganasetu.app",
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "Attach photos to bills, announcements and the community gallery"
       }
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/adaptive-icon.png",
-        "backgroundColor": "#000000"
+        "foregroundImage": "./assets/images/vinayaka-icon.png",
+        "backgroundColor": "#f4a62a"
       },
-      "package": "com.emergent.festivalhub.qk786z",
-      "permissions": ["READ_MEDIA_IMAGES"]
+      "package": "com.ganasetu.app",
+      "permissions": [
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -45,11 +49,19 @@
       "expo-status-bar",
       [
         "expo-image-picker",
-        { "photosPermission": "Attach photos to bills, announcements and gallery" }
+        {
+          "photosPermission": "Attach photos to bills, announcements and gallery"
+        }
       ]
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "8ea87ff1-b8fa-41ad-aa12-9c214d45233e"
+      }
     }
   }
 }

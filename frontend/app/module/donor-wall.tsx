@@ -39,7 +39,7 @@ export default function DonorWall() {
       <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + spacing["3xl"] }}
         refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={colors.brandPrimary} />}>
         {/* Hero — sponsor board look */}
-        <LinearGradient colors={["#2B221E", "#4E342E"]} style={styles.hero}>
+        <LinearGradient colors={[colors.surfaceInverse, colors.info]} style={styles.hero}>
           <Text style={styles.heroMantra}>|| Sponsors ||</Text>
           <Text style={styles.heroBig}>{fmtINR(total)}</Text>
           <Text style={styles.heroSub}>from {grouped.length} generous sevaks</Text>

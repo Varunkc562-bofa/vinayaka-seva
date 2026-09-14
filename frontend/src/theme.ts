@@ -1,41 +1,41 @@
-// Vinayaka Seva - Saffron/Gold/Cream design system
+// Vinayaka Seva - Warm devotional design system
 import { useMemo } from "react";
 import { Appearance, Platform, StyleSheet, useColorScheme } from "react-native";
 
 export type ColorScheme = "light" | "dark";
 
 const light = {
-  surface: "#FAFAF5",
-  onSurface: "#2A2421",
+  surface: "#FFF9F1",
+  onSurface: "#32231F",
   surfaceSecondary: "#FFFFFF",
-  onSurfaceSecondary: "#2A2421",
-  surfaceTertiary: "#F1EFE7",
-  onSurfaceTertiary: "#4A403A",
-  surfaceInverse: "#2B221E",
+  onSurfaceSecondary: "#32231F",
+  surfaceTertiary: "#F8EEE2",
+  onSurfaceTertiary: "#66534B",
+  surfaceInverse: "#3B171B",
   onSurfaceInverse: "#FFFFFF",
-  muted: "#7D746D",
+  muted: "#89766D",
 
-  brand: "#E65100",
+  brand: "#D95722",
   onBrand: "#FFFFFF",
-  brandPrimary: "#E65100",
+  brandPrimary: "#D95722",
   onBrandPrimary: "#FFFFFF",
-  brandSecondary: "#D4AF37",
-  onBrandSecondary: "#2A2421",
-  brandTertiary: "#FBE9E7",
-  onBrandTertiary: "#E65100",
+  brandSecondary: "#D4A72C",
+  onBrandSecondary: "#32231F",
+  brandTertiary: "#FBE5D8",
+  onBrandTertiary: "#A63D1C",
 
-  success: "#2E7D32",
+  success: "#3A8054",
   onSuccess: "#FFFFFF",
-  warning: "#F57F17",
-  onWarning: "#2A2421",
-  error: "#800000",
+  warning: "#C88420",
+  onWarning: "#32231F",
+  error: "#9E2B35",
   onError: "#FFFFFF",
-  info: "#4E342E",
+  info: "#713139",
   onInfo: "#FFFFFF",
 
-  border: "#E8E5DA",
-  borderStrong: "#D7D2C1",
-  divider: "#E8E5DA",
+  border: "#F0DFCE",
+  borderStrong: "#DFC5AF",
+  divider: "#F0DFCE",
 };
 
 export type ThemeColors = typeof light;
@@ -51,13 +51,13 @@ export const fonts = {
 };
 
 export function setColorScheme(scheme: ColorScheme | null) {
-  Appearance.setColorScheme?.(scheme);
+  Appearance.setColorScheme?.(scheme || defaultScheme);
 }
 setColorScheme?.(themes.dark ? null : defaultScheme);
 
 export function useTheme(): { scheme: ColorScheme; colors: ThemeColors } {
   const system = useColorScheme();
-  const scheme: ColorScheme = system && themes[system] ? system : defaultScheme;
+  const scheme: ColorScheme = system === "dark" && themes.dark ? "dark" : defaultScheme;
   return { scheme, colors: themes[scheme] ?? themes.light };
 }
 

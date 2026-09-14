@@ -1,9 +1,11 @@
-import { Alert, Linking } from "react-native";
+import { Alert, Linking, Platform } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { uploadFile } from "@/src/api";
 
 // Request media library permission (contextual, with settings fallback)
 export async function ensureMediaPermission(): Promise<boolean> {
+  // Browsers open a native file chooser and do not need Expo media permission.
+  if (Platform.OS === "web") return true;
   const cur = await ImagePicker.getMediaLibraryPermissionsAsync();
   if (cur.granted) return true;
   if (!cur.canAskAgain) {

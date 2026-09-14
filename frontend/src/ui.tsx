@@ -1,5 +1,6 @@
 import React from "react";
 import { View, Text, Pressable, StyleSheet, ScrollView, TextInput, TextInputProps, Modal, KeyboardAvoidingView, Platform } from "react-native";
+import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, fonts, radius, spacing } from "@/src/theme";
 
@@ -7,17 +8,25 @@ export function ScreenHeader({ title, subtitle, right, back, onBack }: {
   title: string; subtitle?: string; right?: React.ReactNode; back?: boolean; onBack?: () => void;
 }) {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
+  const handleBack = () => {
+    if (router.canGoBack()) {
+      onBack?.();
+      return;
+    }
+    router.replace("/(tabs)/home");
+  };
   return (
-    <View style={{ paddingTop: insets.top + spacing.md, paddingHorizontal: spacing.xl, paddingBottom: spacing.md, backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.border }}>
+    <View style={{ paddingTop: insets.top + spacing.md, paddingHorizontal: spacing.xl, paddingBottom: spacing.lg, backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.border, overflow: "hidden" }}>
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
         <View style={{ flex: 1, flexDirection: "row", alignItems: "center" }}>
           {back && (
-            <Pressable onPress={onBack} hitSlop={12} style={{ marginRight: spacing.md }} testID="back-button">
+            <Pressable onPress={handleBack} hitSlop={12} style={{ marginRight: spacing.md }} testID="back-button">
               <Text style={{ fontSize: 26, color: colors.brandPrimary }}>‹</Text>
             </Pressable>
           )}
           <View style={{ flex: 1 }}>
-            <Text style={{ fontFamily: fonts.display, fontSize: 28, fontWeight: "600", color: colors.onSurface }}>{title}</Text>
+            <Text style={{ fontFamily: fonts.display, fontSize: 25, fontWeight: "700", color: colors.onSurface }}>{title}</Text>
             {subtitle ? <Text style={{ color: colors.muted, fontSize: 13, marginTop: 2 }}>{subtitle}</Text> : null}
           </View>
         </View>
@@ -63,8 +72,8 @@ export function Button({ label, onPress, tone = "primary", disabled, testID, sty
   const t = tones[tone];
   return (
     <Pressable onPress={onPress} disabled={disabled} testID={testID}
-      style={[{ paddingVertical: 16, paddingHorizontal: spacing.xl, borderRadius: radius.pill, backgroundColor: t.bg, alignItems: "center", opacity: disabled ? 0.5 : 1, borderWidth: tone === "ghost" ? 1 : 0, borderColor: colors.brandPrimary }, style]}>
-      <Text style={{ color: t.fg, fontSize: 15, fontWeight: "700" }}>{label}</Text>
+      style={[{ minHeight: 52, paddingVertical: 15, paddingHorizontal: spacing.xl, borderRadius: radius.md, backgroundColor: t.bg, alignItems: "center", justifyContent: "center", opacity: disabled ? 0.5 : 1, borderWidth: tone === "ghost" ? 1 : 0, borderColor: colors.brandPrimary, shadowColor: colors.surfaceInverse, shadowOpacity: tone === "ghost" ? 0 : 0.12, shadowRadius: 8, shadowOffset: { width: 0, height: 4 }, elevation: tone === "ghost" ? 0 : 3 }, style]}>
+      <Text style={{ color: t.fg, fontSize: 15, fontWeight: "800", letterSpacing: 0.2 }}>{label}</Text>
     </Pressable>
   );
 }
@@ -113,7 +122,7 @@ export function Empty({ title, body, testID }: { title: string; body?: string; t
 }
 
 export const cardStyles = StyleSheet.create({
-  card: { backgroundColor: colors.surfaceSecondary, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, padding: spacing.lg, marginBottom: spacing.md },
+  card: { backgroundColor: colors.surfaceSecondary, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, padding: spacing.lg, marginBottom: spacing.md, shadowColor: colors.surfaceInverse, shadowOpacity: 0.06, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 1 },
 });
 
 export function priorityColor(p: string) {

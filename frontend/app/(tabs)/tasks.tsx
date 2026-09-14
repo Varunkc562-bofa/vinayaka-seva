@@ -63,6 +63,8 @@ export default function Tasks() {
   });
 
   const filtered = filter === "all" ? tasks : tasks.filter((t: any) => t.status === filter);
+  const completedCount = tasks.filter((t: any) => t.status === "done").length;
+  const progress = tasks.length ? completedCount / tasks.length : 0;
 
   const canManage = (t: any) =>
     OFFICERS.includes(user?.role || "") ||
@@ -129,6 +131,10 @@ export default function Tasks() {
         contentContainerStyle={{ padding: spacing.xl, paddingBottom: insets.bottom + spacing["3xl"] }}
         refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={colors.brandPrimary} />}
       >
+        <View style={styles.progressCard} testID="seva-progress-card">
+          <View style={styles.progressCircle}><Text style={styles.progressValue}>{completedCount}/{tasks.length || 0}</Text></View>
+          <View style={{ flex: 1 }}><Text style={styles.progressTitle}>Your Seva Progress</Text><Text style={styles.progressSub}>{completedCount} of {tasks.length || 0} tasks completed</Text><View style={styles.progressTrack}><View style={[styles.progressFill, { width: `${Math.round(progress * 100)}%` }]} /></View><Text style={styles.progressHint}>{progress === 1 && tasks.length ? "All seva complete. Beautiful work." : "Keep going! Seva builds stronger bonds."}</Text></View>
+        </View>
         {isLoading ? <ActivityIndicator color={colors.brandPrimary} /> :
          filtered.length === 0 ? <Empty title="All tasks complete" body="Great seva! Add a new task with the + button." testID="tasks-empty" /> :
          filtered.map((t: any) => (
@@ -196,6 +202,14 @@ const styles = StyleSheet.create({
   addBtn: { width: 42, height: 42, borderRadius: 21, backgroundColor: colors.brandPrimary, alignItems: "center", justifyContent: "center" },
   addTxt: { color: colors.onBrand, fontSize: 26, lineHeight: 28, fontWeight: "300" },
   card: { backgroundColor: colors.surfaceSecondary, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, padding: spacing.lg, marginBottom: spacing.md },
+  progressCard: { flexDirection: "row", alignItems: "center", backgroundColor: colors.surfaceSecondary, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, padding: spacing.lg, marginBottom: spacing.lg },
+  progressCircle: { width: 62, height: 62, borderRadius: 31, borderWidth: 6, borderColor: colors.brandTertiary, alignItems: "center", justifyContent: "center", marginRight: spacing.md },
+  progressValue: { color: colors.brandPrimary, fontFamily: fonts.display, fontSize: 18, fontWeight: "700" },
+  progressTitle: { color: colors.onSurface, fontFamily: fonts.display, fontSize: 19, fontWeight: "700" },
+  progressSub: { color: colors.muted, fontSize: 12, marginTop: 2 },
+  progressTrack: { height: 7, borderRadius: 4, backgroundColor: colors.surfaceTertiary, overflow: "hidden", marginTop: spacing.sm },
+  progressFill: { height: "100%", borderRadius: 4, backgroundColor: colors.success },
+  progressHint: { color: colors.success, fontSize: 11, marginTop: 6, fontWeight: "700" },
   check: { width: 28, height: 28, borderRadius: 8, borderWidth: 2, borderColor: colors.borderStrong, marginRight: spacing.md, marginTop: 2, alignItems: "center", justifyContent: "center" },
   checkOn: { backgroundColor: colors.success, borderColor: colors.success },
   title: { fontSize: 17, fontFamily: fonts.display, fontWeight: "600", color: colors.onSurface },

@@ -1,9 +1,10 @@
 import React, { useState, useMemo, useCallback } from "react";
-import { View, Text, ScrollView, Pressable, StyleSheet, ActivityIndicator, RefreshControl } from "react-native";
+import { View, Text, ScrollView, Pressable, StyleSheet, ActivityIndicator, RefreshControl, Linking, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter, useFocusEffect } from "expo-router";
 import { api } from "@/src/api";
+import { useAuth } from "@/src/auth";
 import { intents } from "@/src/intents";
 import { colors, fonts, radius, spacing } from "@/src/theme";
 import { ScreenHeader, BottomSheet, Field, Button, Empty, fmtINR } from "@/src/ui";
@@ -14,6 +15,7 @@ export default function Donations() {
   const insets = useSafeAreaInsets();
   const qc = useQueryClient();
   const router = useRouter();
+  const { user } = useAuth();
   const [show, setShow] = useState(false);
   const [editing, setEditing] = useState<any>(null);
   const [donor, setDonor] = useState(""); const [amount, setAmount] = useState("");
@@ -22,6 +24,7 @@ export default function Donations() {
   const [mode, setMode] = useState("cash");
   const [note, setNote] = useState(""); const [phone, setPhone] = useState("");
   const [sendSms, setSendSms] = useState(true);
+  const [confirmDel, setConfirmDel] = useState(false);
 
   const { data: donations = [], isLoading, refetch, isRefetching } = useQuery({
     queryKey: ["donations"], queryFn: api.donations,
@@ -79,8 +82,6 @@ export default function Donations() {
     mutationFn: (id: string) => api.deleteDonation(id),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["donations"] }); qc.invalidateQueries({ queryKey: ["dashboard"] }); qc.invalidateQueries({ queryKey: ["pendingDues"] }); setShow(false); setConfirmDel(false); },
   });
-  const [confirmDel, setConfirmDel] = useState(false);
-
   const save = () => {
     const amountVal = parseFloat(amount) || 0;
     const paidVal = isPartial ? (parseFloat(paid) || 0) : amountVal;
@@ -97,6 +98,24 @@ export default function Donations() {
 
   const disabled = !donor.trim() || !amount || (createM.isPending || editM.isPending);
   const shortfall = isPartial ? Math.max(0, (parseFloat(amount) || 0) - (parseFloat(paid) || 0)) : 0;
+  const shareReceipt = (donation: any) => {
+    const paidAmount = donation.paid_amount ?? donation.amount ?? 0;
+    const receipt = [
+      "VINAYAKA SEVA - DONATION RECEIPT",
+      "------------------------------",
+      `Donor: ${donation.donor_name || donor}`,
+      `Amount received: ${fmtINR(paidAmount)}`,
+      `Payment mode: ${(donation.mode || mode).toUpperCase()}`,
+      `Collected by: ${donation.collected_by || donation.created_by || user?.name || "Vinayaka Seva"}`,
+      `Date: ${donation.created_at ? new Date(donation.created_at).toLocaleString() : "-"}`,
+      donation.note || note ? `Note: ${donation.note || note}` : "",
+      "",
+      "Thank you for supporting the seva. Ganpati Bappa Morya!",
+    ].filter(Boolean).join("\n");
+    const webUrl = `https://wa.me/?text=${encodeURIComponent(receipt)}`;
+    const appUrl = `whatsapp://send?text=${encodeURIComponent(receipt)}`;
+    Linking.openURL(Platform.OS === "web" ? webUrl : appUrl).catch(() => Linking.openURL(webUrl));
+  };
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }} testID="donations-screen">
@@ -132,6 +151,12 @@ export default function Donations() {
                   {!complete ? <View style={styles.dueTag}><Text style={styles.dueTxt}>DUE {fmtINR(rem)}</Text></View> : null}
                 </View>
                 <Text style={styles.meta}>{d.mode?.toUpperCase()} · Paid {fmtINR(p)} of {fmtINR(amt)}{d.note ? " · " + d.note : ""}</Text>
+                {d.collected_by || d.created_by ? (
+                  <Text style={styles.collector}>Collected by {d.collected_by || d.created_by}</Text>
+                ) : null}
+                <Pressable onPress={() => shareReceipt(d)} style={styles.receiptBtn} testID={`share-receipt-${d.donation_id}`}>
+                  <Text style={styles.receiptBtnText}>Share receipt on WhatsApp</Text>
+                </Pressable>
               </View>
               <Text style={[styles.amt, complete ? { color: colors.success } : { color: colors.warning }]}>{fmtINR(p)}</Text>
             </Pressable>
@@ -139,6 +164,13 @@ export default function Donations() {
         })}
       </ScrollView>
       <BottomSheet visible={show} onClose={() => setShow(false)} title={editing ? "Edit donation" : "Log a donation"} testID="donation-sheet">
+        <View style={styles.collectorPill} testID="collector-pill">
+          <Text style={styles.collectorPillLbl}>COLLECTED BY</Text>
+          <Text style={styles.collectorPillName}>
+            {editing ? (editing.collected_by || editing.created_by || user?.name || "You") : (user?.name || "You")}
+            {user?.role ? ` · ${user.role}` : ""}
+          </Text>
+        </View>
         <Field label="Donor name" value={donor} onChangeText={setDonor} placeholder="Ramesh Kulkarni" />
         <Field label="Phone (optional, for SMS receipt)" value={phone} onChangeText={setPhone} keyboardType="phone-pad" placeholder="+919876543210" autoCapitalize="none" />
         <Field label={isPartial ? "Total pledged (₹)" : "Amount given (₹)"} value={amount} onChangeText={setAmount} keyboardType="numeric" placeholder="1100" />
@@ -177,6 +209,7 @@ export default function Donations() {
           </Pressable>
         ) : null}
         <Button label={(createM.isPending || editM.isPending) ? "Saving…" : (editing ? "Save changes" : "Save donation")} disabled={disabled} onPress={save} testID="save-donation-button" />
+        {editing ? <Button label="Share receipt on WhatsApp" tone="gold" onPress={() => shareReceipt(editing)} testID="share-edit-receipt-button" style={{ marginTop: spacing.md }} /> : null}
         {editing ? (
           <Pressable
             onPress={() => {
@@ -213,6 +246,9 @@ const styles = StyleSheet.create({
   dueTag: { paddingHorizontal: 8, paddingVertical: 2, backgroundColor: colors.warning, borderRadius: radius.pill },
   dueTxt: { color: colors.onWarning, fontSize: 10, fontWeight: "800", letterSpacing: 0.5 },
   meta: { color: colors.muted, fontSize: 12, marginTop: 2 },
+  collector: { color: colors.brandPrimary, fontSize: 11, marginTop: 4, fontWeight: "600" },
+  receiptBtn: { alignSelf: "flex-start", marginTop: 8, paddingHorizontal: 10, paddingVertical: 7, borderRadius: radius.sm, backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: colors.border },
+  receiptBtnText: { color: colors.brandPrimary, fontSize: 11, fontWeight: "800" },
   amt: { fontFamily: fonts.display, fontSize: 18, fontWeight: "700" },
   optLbl: { fontSize: 12, color: colors.muted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6, fontWeight: "600" },
   dueBanner: { backgroundColor: "#FFF3E0", borderColor: colors.warning, borderWidth: 1, borderRadius: radius.md, padding: 10, marginBottom: spacing.md },
@@ -222,4 +258,7 @@ const styles = StyleSheet.create({
   deleteBtn: { marginTop: spacing.md, paddingVertical: 14, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.error, alignItems: "center" },
   deleteBtnConfirm: { backgroundColor: colors.error, borderColor: colors.error },
   deleteBtnText: { color: colors.error, fontWeight: "700", fontSize: 14 },
+  collectorPill: { backgroundColor: colors.brandTertiary, borderRadius: radius.md, padding: spacing.md, marginBottom: spacing.lg },
+  collectorPillLbl: { color: colors.brandPrimary, fontSize: 10, letterSpacing: 1, fontWeight: "700" },
+  collectorPillName: { color: colors.brandPrimary, fontSize: 14, fontWeight: "700", marginTop: 2 },
 });
