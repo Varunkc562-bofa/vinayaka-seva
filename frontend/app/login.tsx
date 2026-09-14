@@ -1,19 +1,27 @@
 import { View, Text, Pressable, StyleSheet, ActivityIndicator, Alert } from "react-native";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
-import { useState } from "react";
-import { useAuth } from "@/src/auth";
+import { useEffect, useState } from "react";
+import { getLastEmail, setLastEmail } from "@/src/api";
+import { authErrorMessage, useAuth } from "@/src/auth";
 import { colors, fonts, radius, spacing } from "@/src/theme";
 import { Field } from "@/src/ui";
 
 const HERO = require("../assets/images/vinayaka-icon.png");
 
 export default function Login() {
-  const { signIn, register } = useAuth();
+  const { signIn, register, signInAnonymous } = useAuth();
   const [busy, setBusy] = useState(false);
   const [isRegistering, setIsRegistering] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      const lastEmail = await getLastEmail();
+      if (lastEmail) setEmail(lastEmail);
+    })();
+  }, []);
 
   const onSubmit = async () => {
     if (!email.trim() || password.length < 6) {
@@ -25,7 +33,17 @@ export default function Login() {
       if (isRegistering) await register(email, password);
       else await signIn(email, password);
     } catch (error: any) {
-      Alert.alert(isRegistering ? "Registration failed" : "Sign in failed", error?.message || "Please try again.");
+      Alert.alert(isRegistering ? "Registration failed" : "Sign in failed", authErrorMessage(error, isRegistering));
+    } finally { setBusy(false); }
+  };
+
+  const onGuestContinue = async () => {
+    setBusy(true);
+    try {
+      await signInAnonymous();
+      await setLastEmail("");
+    } catch (error: any) {
+      Alert.alert("Guest sign-in failed", authErrorMessage(error, false));
     } finally { setBusy(false); }
   };
 
@@ -48,6 +66,9 @@ export default function Login() {
           {busy ? <ActivityIndicator color={colors.onBrand} />
           : <Text style={styles.ctaText}>{isRegistering ? "Create account" : "Sign in"}</Text>}
         </Pressable>
+        <Pressable style={styles.guestButton} onPress={onGuestContinue} disabled={busy}>
+          <Text style={styles.guestButtonText}>Continue as guest</Text>
+        </Pressable>
         <Pressable onPress={() => setIsRegistering(v => !v)} disabled={busy} style={styles.switcher}>
           <Text style={styles.switcherText}>{isRegistering ? "Already have an account? Sign in" : "New here? Create an account"}</Text>
         </Pressable>
@@ -66,6 +87,8 @@ const styles = StyleSheet.create({
   tag: { color: "rgba(255,255,255,0.85)", fontSize: 15, lineHeight: 22, marginBottom: spacing["2xl"] },
   cta: { backgroundColor: colors.brandPrimary, paddingVertical: 18, borderRadius: radius.pill, alignItems: "center", shadowColor: "#000", shadowOpacity: 0.3, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } },
   ctaText: { color: colors.onBrand, fontSize: 17, fontWeight: "700", letterSpacing: 0.3 },
+  guestButton: { marginTop: spacing.sm, paddingVertical: 14, borderRadius: radius.pill, borderWidth: 1, borderColor: "rgba(255,255,255,0.35)", alignItems: "center" },
+  guestButtonText: { color: "#FFFFFF", fontSize: 15, fontWeight: "600" },
   switcher: { alignItems: "center", paddingVertical: spacing.md },
   switcherText: { color: colors.brandSecondary, fontSize: 14, fontWeight: "600" },
   footer: { color: colors.brandSecondary, textAlign: "center", marginTop: spacing.xl, fontFamily: fonts.display, fontSize: 15, letterSpacing: 1 },

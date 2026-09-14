@@ -1,11 +1,32 @@
 import { Platform } from "react-native";
 import * as SecureStore from "expo-secure-store";
 
-const BASE = process.env.EXPO_PUBLIC_BACKEND_URL || "";
+const BASE = process.env.EXPO_PUBLIC_BACKEND_URL || "https://vinayaka-seva.onrender.com";
 export const API = `${BASE}/api`;
 
 const TOKEN_KEY = "vs_session_token";
+const EMAIL_KEY = "vs_last_email";
 let inMemoryToken: string | null = null;
+
+export async function getLastEmail(): Promise<string> {
+  if (Platform.OS === "web") {
+    try { return window.localStorage.getItem(EMAIL_KEY) || ""; }
+    catch { return ""; }
+  }
+  return (await SecureStore.getItemAsync(EMAIL_KEY)) || "";
+}
+
+export async function setLastEmail(email: string | null) {
+  if (Platform.OS === "web") {
+    try {
+      if (email) window.localStorage.setItem(EMAIL_KEY, email);
+      else window.localStorage.removeItem(EMAIL_KEY);
+    } catch {}
+    return;
+  }
+  if (email) await SecureStore.setItemAsync(EMAIL_KEY, email);
+  else await SecureStore.deleteItemAsync(EMAIL_KEY);
+}
 
 export async function getToken(): Promise<string | null> {
   if (inMemoryToken) return inMemoryToken;
@@ -39,16 +60,28 @@ async function request(path: string, opts: RequestInit = {}) {
   };
   if (token) headers.Authorization = `Bearer ${token}`;
   const res = await fetch(`${API}${path}`, { ...opts, headers });
+  const rawText = await res.text().catch(() => "");
   if (res.status === 401) {
     await setToken(null);
-    throw new Error("Unauthorized");
+    try {
+      const payload = rawText ? JSON.parse(rawText) : null;
+      const detail = payload?.detail || payload?.message || payload?.error;
+      throw new Error(detail || rawText || "Unauthorized");
+    } catch {
+      throw new Error(rawText || "Unauthorized");
+    }
   }
   if (!res.ok) {
-    const t = await res.text().catch(() => "");
-    throw new Error(t || `HTTP ${res.status}`);
+    try {
+      const payload = rawText ? JSON.parse(rawText) : null;
+      const detail = payload?.detail || payload?.message || payload?.error;
+      throw new Error(detail || rawText || `HTTP ${res.status}`);
+    } catch {
+      throw new Error(rawText || `HTTP ${res.status}`);
+    }
   }
   const ct = res.headers.get("content-type") || "";
-  return ct.includes("application/json") ? res.json() : res.text();
+  return ct.includes("application/json") ? JSON.parse(rawText || "null") : rawText;
 }
 
 export const api = {
