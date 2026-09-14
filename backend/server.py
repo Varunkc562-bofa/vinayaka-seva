@@ -38,6 +38,9 @@ def _firebase_app():
         return firebase_admin.initialize_app(credentials.Certificate(json.loads(service_account_json)), options)
     return firebase_admin.initialize_app(options=options)
 
+def _init_storage():
+    _firebase_app()
+
 def _put_object(path: str, data: bytes, content_type: str):
     from firebase_admin import storage
     blob = storage.bucket(app=_firebase_app()).blob(path)
