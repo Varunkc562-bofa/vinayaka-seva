@@ -1,7 +1,14 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
 import { api, getToken, setLastEmail, setToken } from "./api";
 import { auth } from "./firebase";
-import { createUserWithEmailAndPassword, signInAnonymously, signInWithEmailAndPassword, signOut as firebaseSignOut } from "firebase/auth";
+import {
+  createUserWithEmailAndPassword,
+  GoogleAuthProvider,
+  signInAnonymously,
+  signInWithEmailAndPassword,
+  signInWithPopup,
+  signOut as firebaseSignOut,
+} from "firebase/auth";
 
 export type User = {
   user_id: string; email: string; name: string; picture?: string;
@@ -19,8 +26,12 @@ export function authErrorMessage(error: any, registering: boolean): string {
     "email-already-in-use": "An account already exists for this email. Choose Sign in.",
     "weak-password": "Password must contain at least 6 characters.",
     "invalid-email": "Enter a valid email address.",
-    "operation-not-allowed": "Email/password login is disabled in Firebase Authentication.",
+    "operation-not-allowed": "This sign-in method is disabled in Firebase Authentication.",
     "network-request-failed": "Network error. Check your internet connection and try again.",
+    "popup-closed-by-user": "Google sign-in was closed before finishing.",
+    "cancelled-popup-request": "Sign-in request was cancelled.",
+    "popup-blocked": "Sign-in popup was blocked by browser. Please allow popups for this site.",
+    "account-exists-with-different-credential": "An account already exists with the same email using a different sign-in method.",
   };
   if (messages[code]) return messages[code];
   if (rawMessage.includes("Invalid Firebase token") || rawMessage.includes("Firebase token")) {
@@ -40,6 +51,7 @@ type AuthCtx = {
   loading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string) => Promise<void>;
+  signInWithGoogle: () => Promise<void>;
   signInAnonymous: () => Promise<void>;
   signOut: () => Promise<void>;
   refresh: () => Promise<void>;
@@ -86,6 +98,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await exchangeFirebaseUser(credential.user);
   }, [exchangeFirebaseUser]);
 
+  const signInWithGoogle = useCallback(async () => {
+    const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: "select_account" });
+    const credential = await signInWithPopup(auth, provider);
+    if (credential.user.email) {
+      await setLastEmail(credential.user.email);
+    }
+    await exchangeFirebaseUser(credential.user);
+  }, [exchangeFirebaseUser]);
+
   const signInAnonymous = useCallback(async () => {
     const credential = await signInAnonymously(auth);
     await exchangeFirebaseUser(credential.user);
@@ -99,7 +121,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <Ctx.Provider value={{ user, loading, signIn, register, signInAnonymous, signOut, refresh }}>
+    <Ctx.Provider value={{ user, loading, signIn, register, signInWithGoogle, signInAnonymous, signOut, refresh }}>
       {children}
     </Ctx.Provider>
   );

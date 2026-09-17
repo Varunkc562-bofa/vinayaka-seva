@@ -10,8 +10,9 @@ import { Field } from "@/src/ui";
 const HERO = require("../assets/images/vinayaka-icon.png");
 
 export default function Login() {
-  const { signIn, register, signInAnonymous } = useAuth();
+  const { signIn, register, signInWithGoogle, signInAnonymous } = useAuth();
   const [busy, setBusy] = useState(false);
+  const [googleBusy, setGoogleBusy] = useState(false);
   const [isRegistering, setIsRegistering] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -37,6 +38,15 @@ export default function Login() {
     } finally { setBusy(false); }
   };
 
+  const onGoogleContinue = async () => {
+    setGoogleBusy(true);
+    try {
+      await signInWithGoogle();
+    } catch (error: any) {
+      Alert.alert("Google sign-in failed", authErrorMessage(error, false));
+    } finally { setGoogleBusy(false); }
+  };
+
   const onGuestContinue = async () => {
     setBusy(true);
     try {
@@ -46,6 +56,8 @@ export default function Login() {
       Alert.alert("Guest sign-in failed", authErrorMessage(error, false));
     } finally { setBusy(false); }
   };
+
+  const isAnyBusy = busy || googleBusy;
 
   return (
     <View style={styles.root} testID="login-screen">
@@ -62,14 +74,38 @@ export default function Login() {
 
         <Field label="Email" value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" testID="login-email-input" />
         <Field label="Password" value={password} onChangeText={setPassword} secureTextEntry testID="login-password-input" />
-        <Pressable style={styles.cta} onPress={onSubmit} disabled={busy} testID="login-submit-button">
+        <Pressable style={styles.cta} onPress={onSubmit} disabled={isAnyBusy} testID="login-submit-button">
           {busy ? <ActivityIndicator color={colors.onBrand} />
           : <Text style={styles.ctaText}>{isRegistering ? "Create account" : "Sign in"}</Text>}
         </Pressable>
-        <Pressable style={styles.guestButton} onPress={onGuestContinue} disabled={busy}>
+
+        <View style={styles.dividerRow}>
+          <View style={styles.dividerLine} />
+          <Text style={styles.dividerText}>or</Text>
+          <View style={styles.dividerLine} />
+        </View>
+
+        <Pressable
+          style={styles.googleButton}
+          onPress={onGoogleContinue}
+          disabled={isAnyBusy}
+          testID="login-google-button"
+        >
+          {googleBusy ? <ActivityIndicator color="#1F1F1F" />
+          : (
+            <View style={styles.googleContent}>
+              <View style={styles.googleBadge}>
+                <Text style={styles.googleG}>G</Text>
+              </View>
+              <Text style={styles.googleButtonText}>Continue with Google</Text>
+            </View>
+          )}
+        </Pressable>
+
+        <Pressable style={styles.guestButton} onPress={onGuestContinue} disabled={isAnyBusy}>
           <Text style={styles.guestButtonText}>Continue as guest</Text>
         </Pressable>
-        <Pressable onPress={() => setIsRegistering(v => !v)} disabled={busy} style={styles.switcher}>
+        <Pressable onPress={() => setIsRegistering(v => !v)} disabled={isAnyBusy} style={styles.switcher}>
           <Text style={styles.switcherText}>{isRegistering ? "Already have an account? Sign in" : "New here? Create an account"}</Text>
         </Pressable>
         <Text style={styles.footer}>Ganpati Bappa Morya 🌼</Text>
@@ -87,6 +123,14 @@ const styles = StyleSheet.create({
   tag: { color: "rgba(255,255,255,0.85)", fontSize: 15, lineHeight: 22, marginBottom: spacing["2xl"] },
   cta: { backgroundColor: colors.brandPrimary, paddingVertical: 18, borderRadius: radius.pill, alignItems: "center", shadowColor: "#000", shadowOpacity: 0.3, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } },
   ctaText: { color: colors.onBrand, fontSize: 17, fontWeight: "700", letterSpacing: 0.3 },
+  dividerRow: { flexDirection: "row", alignItems: "center", marginVertical: spacing.md },
+  dividerLine: { flex: 1, height: 1, backgroundColor: "rgba(255,255,255,0.25)" },
+  dividerText: { color: "rgba(255,255,255,0.6)", paddingHorizontal: spacing.md, fontSize: 13, fontWeight: "500", textTransform: "uppercase", letterSpacing: 1 },
+  googleButton: { backgroundColor: "#FFFFFF", paddingVertical: 14, borderRadius: radius.pill, alignItems: "center", justifyContent: "center", shadowColor: "#000", shadowOpacity: 0.15, shadowRadius: 8, shadowOffset: { width: 0, height: 2 } },
+  googleContent: { flexDirection: "row", alignItems: "center", justifyContent: "center" },
+  googleBadge: { width: 22, height: 22, borderRadius: 11, backgroundColor: "#4285F4", alignItems: "center", justifyContent: "center", marginRight: spacing.sm },
+  googleG: { color: "#FFFFFF", fontSize: 14, fontWeight: "700" },
+  googleButtonText: { color: "#1F1F1F", fontSize: 15, fontWeight: "600", letterSpacing: 0.2 },
   guestButton: { marginTop: spacing.sm, paddingVertical: 14, borderRadius: radius.pill, borderWidth: 1, borderColor: "rgba(255,255,255,0.35)", alignItems: "center" },
   guestButtonText: { color: "#FFFFFF", fontSize: 15, fontWeight: "600" },
   switcher: { alignItems: "center", paddingVertical: spacing.md },
