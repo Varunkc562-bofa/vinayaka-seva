@@ -60,8 +60,9 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "8ea87ff1-b8fa-41ad-aa12-9c214d45233e"
+        "projectId": "91505524-a938-4113-9ccd-607f60e05b7d"
       }
-    }
+    },
+    "owner": "varunkc562s-team"
   }
 }
